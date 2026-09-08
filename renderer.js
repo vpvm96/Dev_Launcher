@@ -139,9 +139,10 @@ function renderUpdateStatus(update) {
   if (update.phase === 'downloading') { const progress = el('progress'); progress.max = 100; progress.value = update.progress; progress.setAttribute('aria-label', '업데이트 다운로드'); $('modal-body').append(progress, el('p', 'help', `${Math.round(update.progress)}%`)); }
   if (update.phase === 'downloaded') $('modal-body').append(el('p', 'help', '설치 시 실행 중인 서버가 종료됩니다. 프로젝트 등록과 개인 환경 설정은 유지됩니다.'));
   $('modal-actions').replaceChildren(button('닫기', closeModal));
+  if (update.phase === 'current') return;
   const operation = update.phase === 'available' ? ['업데이트 다운로드', 'downloadUpdate'] : update.phase === 'downloaded' ? ['설치 후 재시작', 'installUpdate'] : ['업데이트 확인', 'checkUpdate'];
   const control = submitButton(operation[0], async () => { await api[operation[1]](); updateSignature = ''; renderUpdateStatus(await api.updateStatus()); });
   control.disabled = ['checking', 'downloading'].includes(update.phase);
 }
-$('updates').addEventListener('click', () => { modal('앱 업데이트', 'DEV LAUNCHER'); updateView = true; updateSignature = ''; void attempt(async () => renderUpdateStatus(await api.updateStatus())); });
+$('updates').addEventListener('click', () => { modal('앱 업데이트', 'DEV LAUNCHER'); updateView = true; updateSignature = ''; void attempt(async () => { renderUpdateStatus(await api.updateStatus()); await api.checkUpdate(); updateSignature = ''; renderUpdateStatus(await api.updateStatus()); }); });
 $('modal').addEventListener('close', () => { updateView = false; updateSignature = ''; });

@@ -26,7 +26,7 @@ test('maps update events to plain isolated status and bounded progress', async (
   const copy = api.status(); copy.phase = 'error'; assert.equal(api.status().phase, 'available');
   updater.emit('download-progress', { percent: 130 }); assert.equal(api.status().progress, 100);
   updater.emit('download-progress', { percent: NaN }); assert.equal(api.status().progress, 0);
-  updater.emit('update-not-available', { version: '1.0.0' }); assert.equal(api.status().phase, 'idle');
+  updater.emit('update-not-available', { version: '1.0.0' }); assert.equal(api.status().phase, 'current');
   assert.equal(api.status().currentVersion, '1.0.0');
   await assert.rejects(api.download(), /업데이트가 없습니다/);
 });
@@ -72,7 +72,7 @@ test('rejected checks surface errors and release action lock', async () => {
   const { updater, api } = fixture(); updater.checkForUpdates = async () => { throw new Error('offline'); };
   await assert.rejects(api.check(), /offline/); assert.equal(api.status().phase, 'error');
   updater.checkForUpdates = async () => updater.emit('update-not-available');
-  await api.check(); assert.equal(api.status().phase, 'idle');
+  await api.check(); assert.equal(api.status().phase, 'current');
 });
 
 test('installation failure after cleanup explains how to recover project execution', async () => {

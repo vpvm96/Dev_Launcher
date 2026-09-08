@@ -18,7 +18,7 @@ function createUpdater({ autoUpdater, isPackaged, version, beforeInstall }) {
   });
   autoUpdater.on('update-not-available', () => {
     available = false; downloaded = false;
-    set({ phase: 'idle', version, progress: 0, message: '최신 버전을 사용하고 있습니다.' });
+    set({ phase: 'current', version, progress: 0, message: '최신 버전을 사용하고 있습니다.' });
   });
   autoUpdater.on('download-progress', info => {
     const progress = Number(info.percent);
