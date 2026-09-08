@@ -22,7 +22,7 @@ async function refresh(force = false) {
   if (state.refreshing) return;
   state.refreshing = true;
   try {
-    const data = await api.list(); state.groups = data.groups;
+    const data = await api.list(); if (!$('auto-open').disabled) $('auto-open').checked = data.autoOpen; state.groups = data.groups;
     if (!currentGroup()) state.group = state.groups[0]?.id || null;
     for (const group of state.groups) for (const app of group.apps) { if (!state.selected.has(app.id)) state.selected.set(app.id, true); if (!state.modes.has(app.id)) state.modes.set(app.id, app.mode || 'dev'); }
     const signature = JSON.stringify([data.groups, state.group, [...state.busy]]);
@@ -110,3 +110,10 @@ $('group-mode').addEventListener('change', () => { const value = $('group-mode')
 $('start-selected').addEventListener('click', () => { const apps = (currentGroup()?.apps || []).filter((app) => state.selected.get(app.id)); void Promise.all(apps.map((app) => action(app, active(app) && app.mode !== mode(app) ? 'restart' : 'start'))); });
 $('stop-all').addEventListener('click', () => { void Promise.all((currentGroup()?.apps || []).filter(active).map((app) => action(app, 'stop'))); });
 void attempt(() => refresh(true)); setInterval(() => { void attempt(() => refresh()); }, 1500);
+
+$('auto-open').addEventListener('change', async () => {
+  const checkbox = $('auto-open'); checkbox.disabled = true;
+  try { await api.setAutoOpen(checkbox.checked); toast(checkbox.checked ? '실행 후 브라우저가 자동으로 열립니다.' : '브라우저 자동 열기를 껐어요.'); }
+  catch (error) { checkbox.checked = !checkbox.checked; toast(error.message, true); }
+  finally { checkbox.disabled = false; }
+});

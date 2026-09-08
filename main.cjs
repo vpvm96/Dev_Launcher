@@ -16,12 +16,12 @@ else {
     try {
       process.env.PATH = execFileSync('/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 5000 }).trim();
     } catch { /* 현재 프로세스의 PATH를 유지한다. */ }
-    engine = new Engine({ dataDir: process.env.DEV_LAUNCHER_DATA_DIR || app.getPath('userData') });
+    engine = new Engine({ dataDir: process.env.DEV_LAUNCHER_DATA_DIR || app.getPath('userData'), openBrowser: url => shell.openExternal(url) });
     const handle = (name, fn) => ipcMain.handle(name, async (event, ...args) => {
       if (event.sender !== window?.webContents || event.senderFrame.url !== page) throw new Error('허용되지 않은 요청입니다.');
       return fn(...args);
     });
-    for (const method of ['list', 'addGroup', 'addApp', 'removeApp', 'renameApp', 'renameGroup', 'env', 'saveEnv', 'start', 'stop', 'restart', 'logs']) {
+    for (const method of ['list', 'setAutoOpen', 'addGroup', 'addApp', 'removeApp', 'renameApp', 'renameGroup', 'env', 'saveEnv', 'start', 'stop', 'restart', 'logs']) {
       handle(method, (...args) => engine[method](...args));
     }
     handle('chooseProject', async () => {

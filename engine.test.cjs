@@ -7,7 +7,7 @@ const path = require('node:path');
 const net = require('node:net');
 const { Engine, recipe } = require('./engine.cjs');
 const delay = ms => new Promise(r => setTimeout(r, ms));
-async function fixture(t, script = 'cp ./env/.env.dev ./.env && node server.cjs') {
+async function fixture(t, script = 'cp ./env/.env.dev ./.env && node server.cjs', options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-launcher-test-'));
   const project = path.join(root, 'project'); await fs.mkdir(path.join(project, 'env'), { recursive: true });
   await fs.writeFile(path.join(project, 'package.json'), JSON.stringify({ scripts: { 'start:dev': script, 'start:prod': 'cp ./env/.env.prod ./.env && node server.cjs' } }));
@@ -16,7 +16,7 @@ async function fixture(t, script = 'cp ./env/.env.dev ./.env && node server.cjs'
   await fs.writeFile(path.join(project, '.env'), 'KEEP=unchanged\n');
   await fs.writeFile(path.join(project, 'server.cjs'), `const fs = require('fs'); fs.writeFileSync('observed.json', JSON.stringify({url:process.env.API_URL,multi:process.env.MULTILINE,token:process.env.TOKEN,pid:process.pid}));setInterval(()=>{},1000);`);
   const dataDir = path.join(root, 'data'); await fs.mkdir(dataDir); await fs.writeFile(path.join(dataDir, 'config.json'), JSON.stringify({ groups: [], overrides: {} }));
-  const engine = new Engine({ dataDir }); const group = await engine.addGroup('Test'); const app = await engine.addApp(group.id, { path: project });
+  const engine = new Engine({ ...options, dataDir }); const group = await engine.addGroup('Test'); const app = await engine.addApp(group.id, { path: project });
   t.after(async () => { await engine.shutdown(); await fs.rm(root, { recursive: true, force: true }); });
   return { engine, app, root, project, dataDir };
 }
@@ -123,4 +123,27 @@ test('short port flags are discovered and refresh previously stored defaults', a
   await engine.start(app.id, 'dev');
   await observed(project);
   assert.equal((await engine.list()).groups[0].apps[0].port, 2050);
+});
+
+test('opens browser once after listening and respects disable and stop', async t => {
+  const listener = net.createServer(); await new Promise(r => listener.listen(0, r));
+  const port = listener.address().port; await new Promise(r => listener.close(r));
+  const opened = [];
+  const { engine, app, project, dataDir } = await fixture(t, `PORT=${port} node server.cjs`, { openBrowser: async url => { opened.push(url); } });
+  await fs.writeFile(path.join(project, 'server.cjs'), "const fs=require('fs');fs.writeFileSync('observed.json',JSON.stringify({browser:process.env.BROWSER}));setTimeout(()=>require('http').createServer((q,s)=>s.end('ok')).listen(Number(process.env.PORT)),500);");
+  await engine.start(app.id, 'dev');
+  assert.equal(opened.length, 0);
+  assert.equal((await observed(project)).browser, 'none');
+  for (let i=0; i<60 && !opened.length; i++) await delay(50);
+  assert.deepEqual(opened, [`http://localhost:${port}`]);
+  await engine.start(app.id, 'dev'); await delay(300);
+  assert.equal(opened.length, 1);
+  await engine.setAutoOpen(false);
+  assert.equal((await new Engine({ dataDir }).list()).autoOpen, false);
+  await engine.restart(app.id, 'dev'); await delay(900);
+  assert.equal(opened.length, 1);
+  await engine.stop(app.id);
+  await engine.setAutoOpen(true);
+  await engine.start(app.id, 'dev'); await engine.stop(app.id); await delay(600);
+  assert.equal(opened.length, 1);
 });

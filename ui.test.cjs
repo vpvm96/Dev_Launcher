@@ -19,7 +19,7 @@ async function setup(t) {
   await fs.writeFile(path.join(project, 'env/.env.prod'), `API_URL=https://prod.example\nPORT=${port}\n`);
   await fs.writeFile(path.join(project, '.env'), 'PRESERVE=original\n');
   await fs.writeFile(path.join(project, 'server.cjs'), `// 테스트용 환경값을 기록하는 임시 서버\nrequire('node:fs').writeFileSync('observed.json', JSON.stringify({api: process.env.API_URL,pid:process.pid}));require('node:http').createServer((q,s)=>s.end('ok')).listen(Number(process.env.PORT));`);
-  await fs.writeFile(path.join(data, 'config.json'), JSON.stringify({ groups: [{ id: 'test-group', name: 'Test Workspace', apps: [{ id: 'test-app', name: 'user', path: project, scripts: { dev: 'start:dev', prod: 'start:prod' }, envFiles: { dev: 'env/.env.dev', prod: 'env/.env.prod' }, ports: { dev: port, prod: port }, port }] }], overrides: {} }));
+  await fs.writeFile(path.join(data, 'config.json'), JSON.stringify({ autoOpen: false, groups: [{ id: 'test-group', name: 'Test Workspace', apps: [{ id: 'test-app', name: 'user', path: project, scripts: { dev: 'start:dev', prod: 'start:prod' }, envFiles: { dev: 'env/.env.dev', prod: 'env/.env.prod' }, ports: { dev: port, prod: port }, port }] }], overrides: {} }));
   const env = { ...process.env, DEV_LAUNCHER_DATA_DIR: data }; delete env.ELECTRON_RUN_AS_NODE;
   const instance = await electron.launch({ args: [__dirname], env });
   t.after(async () => { await instance.close(); await fs.rm(root, { recursive: true, force: true }); });
@@ -114,4 +114,12 @@ test('environment settings edit the saved launch script', { timeout: 40000 }, as
   await page.keyboard.press('Escape');
   await page.locator('#start-selected').click();
   await expect.poll(async () => { try { return JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).api; } catch { return ''; } }).toBe('https://dev.example');
+});
+
+test('global browser preference persists across reloads', { timeout: 40000 }, async t => {
+  const { page } = await setup(t);
+  await page.getByLabel('실행 후 브라우저 열기', { exact: false }).check();
+  await expect(page.locator('#auto-open')).toBeEnabled();
+  await page.reload();
+  await expect(page.locator('#auto-open')).toBeChecked();
 });

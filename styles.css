@@ -57,3 +57,5 @@ select option:hover, select option:focus { background: #334b3d; outline: none; }
 select option::checkmark { order: 1; margin-left: auto; color: var(--mint); }
 select:disabled { opacity: .4; cursor: default; }
 @media (prefers-reduced-motion: reduce) { select { transition: none; } }
+
+.auto-open{margin:18px 2px 0;color:var(--text)}.auto-open span{color:var(--muted);font-size:11px;margin-left:4px}

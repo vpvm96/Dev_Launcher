@@ -20,8 +20,8 @@ function recipe(raw) {
   return { command, file, port: port ? Number(port) : /\b(next dev|react-scripts start)\b/.test(command) ? 3000 : /\bvite\b/.test(command) ? 5173 : undefined };
 }
 class Engine {
-  constructor({ dataDir = path.join(os.homedir(), 'Library/Application Support/Dev Launcher') } = {}) {
-    this.dataDir = dataDir; this.runtime = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
+  constructor({ dataDir = path.join(os.homedir(), 'Library/Application Support/Dev Launcher'), openBrowser } = {}) {
+    this.openBrowser = openBrowser; this.dataDir = dataDir; this.runtime = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
     this.ready = this.load();
   }
   async load() {
@@ -75,7 +75,7 @@ class Engine {
   serial(id, fn) { const next = (this.queues.get(id) || Promise.resolve()).catch(() => {}).then(fn); this.queues.set(id, next); return next; }
   async list() {
     await this.ready;
-    return { groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, status: r?.status || 'stopped', mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error }; }) })) };
+    return { autoOpen: this.config.autoOpen !== false, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, status: r?.status || 'stopped', mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error }; }) })) };
   }
   async discover(directory) {
     const absolute = await fs.realpath(directory);
@@ -90,6 +90,30 @@ class Engine {
       if (!envFiles[mode]) for (const file of mode === 'dev' ? ['env/.env.dev', '.env.dev', '.env.development', '.env'] : ['env/.env.prod', '.env.prod', '.env.prd', '.env.production']) { try { await fs.access(path.join(absolute, file)); envFiles[mode] = file; break; } catch {} }
     }
     return { name: path.basename(absolute), path: absolute, scripts, envFiles, ports, port: ports.dev, availableScripts: Object.keys(all) };
+  }
+  async setAutoOpen(enabled) {
+    await this.ready;
+    if (typeof enabled !== 'boolean') throw new Error('자동 열기 설정이 올바르지 않습니다.');
+    this.config.autoOpen = enabled; await this.persist();
+  }
+  async openWhenReady(id, runtime) {
+    if (!this.openBrowser || !runtime.port) return;
+    const current = () => !this.closing && this.config.autoOpen !== false && this.runtime.get(id) === runtime && runtime.child && !runtime.stopping;
+    const deadline = Date.now() + 120000;
+    while (current() && Date.now() < deadline) {
+      const listening = await new Promise(resolve => {
+        const socket = net.createConnection({ host: 'localhost', port: runtime.port });
+        const finish = value => { socket.destroy(); resolve(value); };
+        socket.setTimeout(500);
+        socket.once('connect', () => finish(true));
+        socket.once('error', () => finish(false));
+        socket.once('timeout', () => finish(false));
+      });
+      if (!current()) return;
+      if (listening) { await this.openBrowser(`http://localhost:${runtime.port}`); return; }
+      await delay(250);
+    }
+    if (current()) runtime.log = (runtime.log + '\n브라우저 자동 열기 대기 시간이 지났습니다. 서버 준비 후 열기 버튼을 눌러 주세요.\n').slice(-100000);
   }
   async addGroup(name) { await this.ready; if (!String(name).trim()) throw new Error('그룹 이름을 입력해 주세요.'); const group = { id: randomUUID(), name: String(name).trim(), apps: [] }; this.config.groups.push(group); await this.persist(); return group; }
   async addApp(groupId, config) {
@@ -162,6 +186,7 @@ class Engine {
       merged.PATH = [...bins, path.dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(path.delimiter);
       merged.npm_lifecycle_event = script; merged.npm_lifecycle_script = raw; merged.npm_package_json = path.join(app.path, 'package.json'); merged.INIT_CWD = app.path;
       if (process.versions.electron) merged.ELECTRON_RUN_AS_NODE = '1';
+      if (this.openBrowser) merged.BROWSER = 'none';
       const child = spawn('/bin/sh', ['-c', parsed.command], { cwd: app.path, env: merged, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       r.child = child; r.pid = child.pid;
       r.redactions = [...new Set([...(old?.redactions || []), ...Object.values({ ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides })])].filter(value => value.length >= 4).sort((a, b) => b.length - a.length);
@@ -171,6 +196,7 @@ class Engine {
       child.once('exit', (code, signal) => { if (r.child === child) { r.child = null; r.status = r.stopping ? 'stopped' : 'error'; if (!r.stopping) { r.error = `프로세스가 종료되었습니다 (${signal || code}).`; this.terminateGroup(child.pid).then(() => { if (r.pid === child.pid) r.pid = null; }).catch(error => { r.error = error.message; }); } } });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       r.status = 'running';
+      void this.openWhenReady(id, r).catch(() => { r.log = (r.log + '\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n').slice(-100000); });
       append(`\n[${new Date().toLocaleTimeString()}] ${mode.toUpperCase()} 실행\n`);
     } catch (error) { r.status = 'error'; r.error = error.message; throw error; }
   }
