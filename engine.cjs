@@ -14,6 +14,8 @@ function recipe(raw) {
   if (cp) { file = cp[1] || cp[2] || cp[3]; command = command.slice(cp[0].length); }
   const envcmd = command.match(new RegExp('env-cmd\\s+-f\\s+' + ENV_PATH + '\\s+'));
   if (envcmd) { file = envcmd[1] || envcmd[2] || envcmd[3]; command = command.replace(envcmd[0], ''); }
+  const dotenv = command.match(new RegExp('^\\s*dotenv\\s+-e\\s+' + ENV_PATH + '\\s+--\\s+'));
+  if (dotenv) { file = dotenv[1] || dotenv[2] || dotenv[3]; command = command.slice(dotenv[0].length); }
   const port = command.match(/(?:--port(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
   return { command, file, port: port ? Number(port) : /\b(next dev|react-scripts start)\b/.test(command) ? 3000 : /\bvite\b/.test(command) ? 5173 : undefined };
 }
@@ -63,7 +65,7 @@ class Engine {
     const pkg = JSON.parse(await fs.readFile(path.join(absolute, 'package.json'), 'utf8'));
     const all = pkg.scripts || {};
     const choose = keys => keys.find(k => all[k]) || '';
-    const scripts = { dev: choose(['start:dev', 'dev', 'start']), prod: choose(['start:prod', 'start:prd', 'prd', 'prod']) };
+    const scripts = { dev: choose(['dev', 'start:dev', 'start']), prod: choose(['start:prod', 'start:prd', 'prd', 'prod']) };
     const envFiles = {}, ports = {};
     for (const mode of ['dev', 'prod']) {
       const r = recipe(all[scripts[mode]]); ports[mode] = r.port;
@@ -96,12 +98,18 @@ class Engine {
   async env(id, mode) {
     await this.ready; this.mode(mode); const app = this.app(id); let base = {};
     if (app.envFiles[mode]) base = parse(await fs.readFile(path.resolve(app.path, app.envFiles[mode])));
-    return { base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) } };
+    const pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
+    return { script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) } };
   }
-  async saveEnv(id, mode, overrides) {
+  async saveEnv(id, mode, overrides, script) {
     await this.ready; this.app(id); this.mode(mode);
     if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) throw new Error('환경 설정 형식이 올바르지 않습니다.');
     for (const [key, value] of Object.entries(overrides)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string' || value.includes('\0')) throw new Error('환경변수 이름 또는 값이 올바르지 않습니다.');
+    if (script !== undefined) {
+      const app = this.app(id), pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
+      if (typeof script !== 'string' || !Object.hasOwn(pkg.scripts || {}, script)) throw new Error('package.json에 있는 스크립트를 선택해 주세요.');
+      app.scripts[mode] = script; app.ports ||= {}; app.ports[mode] = recipe(pkg.scripts[script]).port;
+    }
     this.config.overrides[id] ||= {}; this.config.overrides[id][mode] = { ...overrides }; await this.persist();
   }
   async start(id, mode = 'dev') { await this.ready; this.mode(mode); return this.serial(id, () => { const next = this.launchQueue.catch(() => {}).then(() => this.startProcess(id, mode)); this.launchQueue = next; return next; }); }
@@ -124,7 +132,7 @@ class Engine {
       if (/\b(?:npm\s+(?:run|start)|yarn|pnpm)\b/.test(raw)) throw new Error('복합 패키지 명령은 지원하지 않습니다. 실제 서버 실행 스크립트를 선택해 주세요.');
       const parsed = recipe(raw);
       // 등록한 스크립트의 환경 로더만 분리하여 프로젝트의 .env 파일을 건드리지 않습니다.
-      if (/(?:^|[;&|]\s*)\s*cp\s+[^\n]+\.env\b/.test(parsed.command) || /\benv-cmd\b/.test(parsed.command)) throw new Error('자동 분리할 수 없는 환경 로더입니다. 환경 복사 없는 실행 명령을 선택해 주세요.');
+      if (/(?:^|[;&|]\s*)\s*cp\s+[^\n]+\.env\b/.test(parsed.command) || /\b(?:env-cmd|dotenv)\b/.test(parsed.command)) throw new Error('자동 분리할 수 없는 환경 로더입니다. 환경 복사 없는 실행 명령을 선택해 주세요.');
       const values = await this.env(id, mode);
       const merged = { ...process.env, ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides };
       const explicitPort = parsed.command.match(/(?:--port(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];

@@ -100,3 +100,18 @@ test('renaming preserves a running service and persists project and group names'
   assert.equal(JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid, before.pid);
   assert.deepEqual(errors, []);
 });
+
+test('environment settings edit the saved launch script', { timeout: 40000 }, async t => {
+  const { page, project } = await setup(t);
+  const pkg = JSON.parse(await fs.readFile(path.join(project, 'package.json'), 'utf8'));
+  pkg.scripts.dev = 'dotenv -e env/.env.dev -- node server.cjs';
+  await fs.writeFile(path.join(project, 'package.json'), JSON.stringify(pkg));
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByLabel('DEV 실행 스크립트', { exact: true }).selectOption('dev');
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await expect(page.getByLabel('DEV 실행 스크립트', { exact: true })).toHaveValue('dev');
+  await page.keyboard.press('Escape');
+  await page.locator('#start-selected').click();
+  await expect.poll(async () => { try { return JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).api; } catch { return ''; } }).toBe('https://dev.example');
+});

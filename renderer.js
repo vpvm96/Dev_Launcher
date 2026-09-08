@@ -82,6 +82,11 @@ async function editEnv(app) {
   const selectedMode = mode(app); modal(`${app.name} 환경 설정`, `${selectedMode.toUpperCase()} / LOCAL OVERRIDES`); $('modal-body').append(el('p', 'help', '환경 설정 불러오는 중…'));
   const revision = state.modalRevision; const data = await api.env(app.id, selectedMode); if (!$('modal').open || state.modalRevision !== revision) return;
   $('modal-body').replaceChildren(); const overrides = Object.assign(Object.create(null), data.overrides); const bases = new Map(data.base.map(({ key, value }) => [key, value])); const keys = [...new Set([...bases.keys(), ...Object.keys(overrides)])];
+  const scriptField = el('label', 'field', `${selectedMode.toUpperCase()} 실행 스크립트`);
+  const scriptSelect = el('select'); scriptSelect.setAttribute('aria-label', `${selectedMode.toUpperCase()} 실행 스크립트`);
+  for (const key of [...new Set([data.script, ...data.availableScripts])]) { const option = el('option', '', key || '스크립트 선택'); option.value = key; scriptSelect.append(option); }
+  scriptSelect.value = data.script; scriptField.append(scriptSelect);
+  $('modal-body').append(scriptField, el('p', 'help', 'package.json의 스크립트를 선택하세요. 저장한 명령은 다음 실행 또는 재시작부터 적용됩니다.'));
   $('modal-body').append(el('p', 'help', '기본 환경 파일 위에 개인 설정을 적용합니다. 체크를 끄면 기본값을 사용하고, 체크한 채 비워두면 빈 문자열을 적용합니다.'));
   const tools = el('div', 'env-tools'); const filter = el('input'); filter.type = 'search'; filter.placeholder = '환경변수 검색'; filter.setAttribute('aria-label', '환경변수 검색'); const revealLabel = el('label', 'check-label'); const reveal = el('input'); reveal.type = 'checkbox'; revealLabel.append(reveal, document.createTextNode('값 표시')); tools.append(filter, revealLabel); const rows = el('div'); $('modal-body').append(tools, rows);
   function drawRows() {
@@ -96,7 +101,7 @@ async function editEnv(app) {
   }
   filter.addEventListener('input', drawRows); reveal.addEventListener('change', drawRows); drawRows();
   const newKeyRow = el('div', 'new-key-row'); const newKey = el('input'); newKey.placeholder = '새 환경변수 이름'; newKey.setAttribute('aria-label', '새 환경변수 이름'); newKeyRow.append(newKey, button('＋ 변수 추가', () => { const key = newKey.value.trim(); if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { toast('영문, 숫자, 밑줄로 변수 이름을 입력해 주세요.', true); return; } if (keys.includes(key)) { toast('이미 등록된 변수입니다.', true); return; } keys.push(key); overrides[key] = ''; newKey.value = ''; filter.value = ''; drawRows(); })); $('modal-body').append(newKeyRow);
-  const save = async (restart) => { await api.saveEnv(app.id, selectedMode, overrides); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true); };
+  const save = async (restart) => { await api.saveEnv(app.id, selectedMode, overrides, scriptSelect.value || undefined); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true); };
   submitButton('설정 저장', () => save(false)); if (active(app)) submitButton(app.mode && app.mode !== selectedMode ? `저장 후 ${selectedMode.toUpperCase()}로 재시작` : '저장 후 재시작', () => save(true));
 }
 $('rename-group').addEventListener('click', () => { const group = currentGroup(); if (group) renameItem(group, true); });

@@ -92,3 +92,17 @@ test('logs continue to redact old environment values after switching mode', asyn
   await engine.restart(app.id, 'prod');
   assert.ok(!engine.logs(app.id).includes('base-token-private'));
 });
+
+test('selects dev and saves a changed dotenv script with isolated overrides', async t => {
+  const { engine, app, project, dataDir } = await fixture(t);
+  const pkg = JSON.parse(await fs.readFile(path.join(project, 'package.json'), 'utf8'));
+  pkg.scripts.dev = 'dotenv -e env/.env.dev -- node server.cjs';
+  await fs.writeFile(path.join(project, 'package.json'), JSON.stringify(pkg));
+  assert.equal((await engine.discover(project)).scripts.dev, 'dev');
+  await assert.rejects(engine.saveEnv(app.id, 'dev', {}, 'missing'), /스크립트/);
+  await engine.saveEnv(app.id, 'dev', { API_URL: 'http://localhost:8899' }, 'dev');
+  assert.equal((await new Engine({ dataDir }).env(app.id, 'dev')).script, 'dev');
+  await engine.start(app.id, 'dev');
+  assert.equal((await observed(project)).url, 'http://localhost:8899');
+  assert.equal(await fs.readFile(path.join(project, '.env'), 'utf8'), 'KEEP=unchanged\n');
+});
