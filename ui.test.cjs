@@ -123,3 +123,18 @@ test('global browser preference persists across reloads', { timeout: 40000 }, as
   await page.reload();
   await expect(page.locator('#auto-open')).toBeChecked();
 });
+
+test('project registration selects scripts from package.json', { timeout: 40000 }, async t => {
+  const { page, instance, project } = await setup(t);
+  const added = path.join(project, '../added-service'); await fs.cp(project, added, { recursive: true });
+  await instance.evaluate(({ dialog }, directory) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] }); }, added);
+  await page.locator('#add-app').click();
+  const dev = page.getByLabel('DEV 실행 스크립트', { exact: true });
+  await expect(dev).toHaveJSProperty('tagName', 'SELECT');
+  await expect(dev).toHaveValue('start:dev');
+  await dev.selectOption('start:prod');
+  await page.getByRole('button', { name: '프로젝트 연결', exact: true }).click();
+  await expect(page.locator('#app-count')).toHaveText('2');
+  const config = JSON.parse(await fs.readFile(path.join(project, '../data/config.json'), 'utf8'));
+  assert.equal(config.groups[0].apps[1].scripts.dev, 'start:prod');
+});
