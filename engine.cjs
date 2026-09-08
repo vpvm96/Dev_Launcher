@@ -16,7 +16,7 @@ function recipe(raw) {
   if (envcmd) { file = envcmd[1] || envcmd[2] || envcmd[3]; command = command.replace(envcmd[0], ''); }
   const dotenv = command.match(new RegExp('^\\s*dotenv\\s+-e\\s+' + ENV_PATH + '\\s+--\\s+'));
   if (dotenv) { file = dotenv[1] || dotenv[2] || dotenv[3]; command = command.slice(dotenv[0].length); }
-  const port = command.match(/(?:--port(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
+  const port = command.match(/(?:(?:^|\s)(?:--port|-p)(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
   return { command, file, port: port ? Number(port) : /\b(next dev|react-scripts start)\b/.test(command) ? 3000 : /\bvite\b/.test(command) ? 5173 : undefined };
 }
 class Engine {
@@ -42,6 +42,23 @@ class Engine {
       }
       await this.persist();
     }
+    let changed = false;
+    for (const app of this.config.groups.flatMap(g => g.apps)) {
+      let pkg;
+      try { pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8')); }
+      catch { continue; }
+      for (const mode of ['dev', 'prod']) {
+        const command = pkg.scripts?.[app.scripts[mode]];
+        if (!command) continue;
+        const port = recipe(command).port;
+        if (port === undefined) continue;
+        app.ports ||= {};
+        if (app.ports[mode] !== port || (mode === 'dev' && app.port !== port)) {
+          app.ports[mode] = port; if (mode === 'dev') app.port = port; changed = true;
+        }
+      }
+    }
+    if (changed) await this.persist();
   }
   persist() {
     const content = JSON.stringify(this.config, null, 2);
@@ -135,7 +152,7 @@ class Engine {
       if (/(?:^|[;&|]\s*)\s*cp\s+[^\n]+\.env\b/.test(parsed.command) || /\b(?:env-cmd|dotenv)\b/.test(parsed.command)) throw new Error('자동 분리할 수 없는 환경 로더입니다. 환경 복사 없는 실행 명령을 선택해 주세요.');
       const values = await this.env(id, mode);
       const merged = { ...process.env, ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides };
-      const explicitPort = parsed.command.match(/(?:--port(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
+      const explicitPort = parsed.command.match(/(?:(?:^|\s)(?:--port|-p)(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
       r.port = Number(explicitPort) || Number(merged.PORT) || parsed.port || undefined;
       if (r.port) {
         for (const [otherId, other] of this.runtime) if (otherId !== id && other.child && other.port === r.port) throw new Error(`${r.port} 포트를 다른 프로젝트가 사용 중입니다.`);

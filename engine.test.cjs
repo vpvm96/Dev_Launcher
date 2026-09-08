@@ -106,3 +106,21 @@ test('selects dev and saves a changed dotenv script with isolated overrides', as
   assert.equal((await observed(project)).url, 'http://localhost:8899');
   assert.equal(await fs.readFile(path.join(project, '.env'), 'utf8'), 'KEEP=unchanged\n');
 });
+
+test('short port flags are discovered and refresh previously stored defaults', async t => {
+  assert.equal(recipe('dotenv -e env/.env.dev.plain -- next dev -p 2050').port, 2050);
+  assert.equal(recipe('next dev --port=2050').port, 2050);
+  const { engine, app, project, dataDir } = await fixture(t, 'node server.cjs -p 2050');
+  const stored = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'));
+  stored.groups[0].apps[0].ports.dev = 3000;
+  stored.groups[0].apps[0].port = 3000;
+  await fs.writeFile(path.join(dataDir, 'config.json'), JSON.stringify(stored));
+  const loaded = new Engine({ dataDir });
+  const refreshed = (await loaded.list()).groups[0].apps[0];
+  assert.equal(refreshed.ports.dev, 2050);
+  assert.equal(refreshed.port, 2050);
+  await engine.saveEnv(app.id, 'dev', { PORT: '3000' });
+  await engine.start(app.id, 'dev');
+  await observed(project);
+  assert.equal((await engine.list()).groups[0].apps[0].port, 2050);
+});
