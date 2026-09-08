@@ -1,0 +1,22 @@
+{
+  "name": "dev-launcher",
+  "productName": "Dev Launcher",
+  "version": "1.0.0",
+  "description": "프로젝트 그룹과 로컬 개발 환경을 관리하는 데스크톱 앱",
+  "main": "main.cjs",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test engine.test.cjs",
+    "package": "electron-packager . 'Dev Launcher' --platform=darwin --arch=arm64 --out=dist --overwrite --ignore='(^|/)(dist|.*test\\.cjs|README\\.md|\\.git)($|/)' --icon=assets/AppIcon.icns",
+    "test:ui": "node --test ui.test.cjs"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@playwright/test": "^1.63.0",
+    "electron": "^44.2.0"
+  }
+}
