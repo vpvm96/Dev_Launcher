@@ -123,3 +123,9 @@ $('auto-open').addEventListener('change', async () => {
   catch (error) { checkbox.checked = !checkbox.checked; toast(error.message, true); }
   finally { checkbox.disabled = false; }
 });
+
+$('restart-app').addEventListener('click', async () => {
+  const control = $('restart-app'); control.disabled = true; control.textContent = '재시작 중…';
+  try { await api.restartApp(); }
+  catch (error) { control.disabled = false; control.textContent = '앱 재시작'; toast(error.message, true); }
+});

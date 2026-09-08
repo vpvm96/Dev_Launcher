@@ -4,7 +4,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 const { Engine } = require('./engine.cjs');
-let engine, window, quitting = false;
+let engine, window, quitting = false, restarting = false;
 const page = pathToFileURL(path.join(__dirname, 'index.html')).href;
 app.setName('Dev Launcher');
 if (process.env.DEV_LAUNCHER_DATA_DIR) app.setPath('userData', process.env.DEV_LAUNCHER_DATA_DIR);
@@ -24,6 +24,11 @@ else {
     for (const method of ['list', 'setAutoOpen', 'addGroup', 'addApp', 'removeApp', 'renameApp', 'renameGroup', 'env', 'saveEnv', 'start', 'stop', 'restart', 'logs']) {
       handle(method, (...args) => engine[method](...args));
     }
+    handle('restartApp', () => {
+      if (restarting || quitting) return;
+      restarting = true;
+      setTimeout(() => app.quit(), 100);
+    });
     handle('chooseProject', async () => {
       const result = await dialog.showOpenDialog(window, { title: '프로젝트 폴더 선택', properties: ['openDirectory'] });
       return result.canceled ? null : engine.discover(result.filePaths[0]);
@@ -51,6 +56,6 @@ else {
     if (quitting || !engine) return;
     event.preventDefault();
     quitting = true;
-    engine.shutdown().finally(() => app.quit());
+    engine.shutdown().finally(() => { if (restarting) app.relaunch(); app.quit(); });
   });
 }

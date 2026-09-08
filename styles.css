@@ -60,4 +60,4 @@ select:disabled { opacity: .4; cursor: default; }
 
 .auto-open{margin:18px 2px 0;color:var(--text)}.auto-open span{color:var(--muted);font-size:11px;margin-left:4px}
 
-.field select{min-width:0;width:100%}
+#restart-app{width:100%;margin-bottom:0}.sidebar-footer>small:first-of-type{margin:8px 0 18px}.field select{min-width:0;width:100%}

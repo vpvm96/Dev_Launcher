@@ -22,7 +22,8 @@ async function setup(t) {
   await fs.writeFile(path.join(data, 'config.json'), JSON.stringify({ autoOpen: false, groups: [{ id: 'test-group', name: 'Test Workspace', apps: [{ id: 'test-app', name: 'user', path: project, scripts: { dev: 'start:dev', prod: 'start:prod' }, envFiles: { dev: 'env/.env.dev', prod: 'env/.env.prod' }, ports: { dev: port, prod: port }, port }] }], overrides: {} }));
   const env = { ...process.env, DEV_LAUNCHER_DATA_DIR: data }; delete env.ELECTRON_RUN_AS_NODE;
   const instance = await electron.launch({ args: [__dirname], env });
-  t.after(async () => { await instance.close(); await fs.rm(root, { recursive: true, force: true }); });
+  const appProcess = instance.process();
+  t.after(async () => { if (appProcess.exitCode === null) await instance.close(); await fs.rm(root, { recursive: true, force: true }); });
   const page = await instance.firstWindow();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await expect(page.locator('#group-title')).toHaveText('Test Workspace');
@@ -137,4 +138,20 @@ test('project registration selects scripts from package.json', { timeout: 40000 
   await expect(page.locator('#app-count')).toHaveText('2');
   const config = JSON.parse(await fs.readFile(path.join(project, '../data/config.json'), 'utf8'));
   assert.equal(config.groups[0].apps[1].scripts.dev, 'start:prod');
+});
+
+test('app restart shuts down managed servers before scheduling relaunch', { timeout: 40000 }, async t => {
+  const { page, instance, project } = await setup(t);
+  await page.locator('#start-selected').click();
+  await expect.poll(async () => { try { return JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid; } catch { return 0; } }).toBeGreaterThan(0);
+  const child = JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid;
+  const marker = path.join(project, 'relaunch.json');
+  await instance.evaluate(async ({ app }, { marker, child }) => {
+    const fs = process.getBuiltinModule('fs');
+    app.relaunch = () => { let alive = true; try { process.kill(child, 0); } catch { alive = false; } fs.writeFileSync(marker, JSON.stringify({ alive })); };
+  }, { marker, child });
+  const closed = instance.waitForEvent('close');
+  await page.getByRole('button', { name: '앱 재시작', exact: true }).click();
+  await closed;
+  assert.deepEqual(JSON.parse(await fs.readFile(marker, 'utf8')), { alive: false });
 });
