@@ -158,7 +158,7 @@ class Engine {
     if (this.closing) throw new Error('앱을 종료하고 있습니다.');
     const app = this.app(id), old = this.runtime.get(id);
     if (old?.pid) { if (old.child && old.mode === mode) return; await this.stopProcess(id); }
-    const r = { status: 'launching', mode, log: old?.log || '', child: null }; this.runtime.set(id, r);
+    const r = { status: 'launching', mode, log: '', child: null }; this.runtime.set(id, r);
     try {
       const pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
       const script = app.scripts[mode]; if (!script || !pkg.scripts?.[script]) throw new Error(`${mode.toUpperCase()} 실행 명령을 설정해 주세요.`);
@@ -189,14 +189,14 @@ class Engine {
       if (this.openBrowser) merged.BROWSER = 'none';
       const child = spawn('/bin/sh', ['-c', parsed.command], { cwd: app.path, env: merged, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       r.child = child; r.pid = child.pid;
-      r.redactions = [...new Set([...(old?.redactions || []), ...Object.values({ ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides })])].filter(value => value.length >= 4).sort((a, b) => b.length - a.length);
-      const append = text => { r.log = (r.log + text).slice(-100000); };
+      r.redactions = Object.values({ ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides }).filter(value => value.length >= 4).sort((a, b) => b.length - a.length);
+      const append = text => { if (r.discardLogs) return; r.log = (r.log + text).slice(-100000); };
       child.stdout.on('data', data => append(data.toString())); child.stderr.on('data', data => append(data.toString()));
       child.once('error', error => { r.error = error.message; r.status = 'error'; r.child = null; append(error.message + '\n'); });
       child.once('exit', (code, signal) => { if (r.child === child) { r.child = null; r.status = r.stopping ? 'stopped' : 'error'; if (!r.stopping) { r.error = `프로세스가 종료되었습니다 (${signal || code}).`; this.terminateGroup(child.pid).then(() => { if (r.pid === child.pid) r.pid = null; }).catch(error => { r.error = error.message; }); } } });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       r.status = 'running';
-      void this.openWhenReady(id, r).catch(() => { r.log = (r.log + '\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n').slice(-100000); });
+      void this.openWhenReady(id, r).catch(() => { if (r.discardLogs) return; r.log = (r.log + '\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n').slice(-100000); });
       append(`\n[${new Date().toLocaleTimeString()}] ${mode.toUpperCase()} 실행\n`);
     } catch (error) { r.status = 'error'; r.error = error.message; throw error; }
   }
@@ -208,8 +208,9 @@ class Engine {
     kill('SIGKILL');
   }
   async stopProcess(id) {
-    const r = this.runtime.get(id); if (!r?.pid) { if (r) { r.status = 'stopped'; r.error = undefined; } return; }
+    const r = this.runtime.get(id); if (!r?.pid) { if (r) { r.status = 'stopped'; r.error = undefined; r.discardLogs = true; r.log = ''; r.redactions = []; } return; }
     r.stopping = true;
+    r.discardLogs = true; r.log = ''; r.redactions = [];
     await this.terminateGroup(r.pid);
     r.child = null; r.pid = null; r.status = 'stopped'; r.error = undefined; r.stopping = false;
   }

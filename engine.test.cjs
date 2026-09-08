@@ -147,3 +147,29 @@ test('opens browser once after listening and respects disable and stop', async t
   await engine.start(app.id, 'dev'); await engine.stop(app.id); await delay(600);
   assert.equal(opened.length, 1);
 });
+
+test('stop clears logs including shutdown output and restart begins fresh', async t => {
+  const { engine, app, project } = await fixture(t);
+  await fs.writeFile(path.join(project, 'server.cjs'), "console.log('previous-session-output');process.on('SIGTERM',()=>{console.log('shutdown-output');process.exit(0)});setInterval(()=>{},1000);");
+  await engine.start(app.id, 'dev');
+  for(let i=0;i<60 && !engine.logs(app.id).includes('previous-session-output');i++) await delay(25);
+  assert.match(engine.logs(app.id), /previous-session-output/);
+  await engine.stop(app.id); await delay(100);
+  assert.equal(engine.logs(app.id), '');
+  await engine.start(app.id, 'dev');
+  for(let i=0;i<60 && !engine.logs(app.id).includes('previous-session-output');i++) await delay(25);
+  await fs.writeFile(path.join(project, 'server.cjs'), "console.log('new-session-output');setInterval(()=>{},1000);");
+  await engine.restart(app.id, 'dev');
+  for(let i=0;i<60 && !engine.logs(app.id).includes('new-session-output');i++) await delay(25);
+  assert.match(engine.logs(app.id), /new-session-output/);
+  assert.doesNotMatch(engine.logs(app.id), /previous-session-output|shutdown-output/);
+});
+
+test('stop clears retained failure logs after the process has exited', async t => {
+  const { engine, app } = await fixture(t, "printf 'failure-output'; exit 1");
+  await engine.start(app.id, 'dev');
+  for(let i=0;i<60 && (await engine.list()).groups[0].apps[0].status !== 'error';i++) await delay(25);
+  assert.match(engine.logs(app.id), /failure-output/);
+  await engine.stop(app.id);
+  assert.equal(engine.logs(app.id), '');
+});
