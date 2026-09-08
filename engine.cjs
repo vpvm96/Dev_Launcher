@@ -80,6 +80,18 @@ class Engine {
     const app = { ...found, name: config.name || found.name, scripts: config.scripts || found.scripts, envFiles: config.envFiles || found.envFiles, id: randomUUID() };
     group.apps.push(app); await this.persist(); return app;
   }
+  async renameApp(id, name) {
+    await this.ready;
+    if (typeof name !== 'string' || !name.trim()) throw new Error('프로젝트 이름을 입력해 주세요.');
+    return this.serial(id, async () => { this.app(id).name = name.trim(); await this.persist(); });
+  }
+  async renameGroup(id, name) {
+    await this.ready;
+    if (typeof name !== 'string' || !name.trim()) throw new Error('그룹 이름을 입력해 주세요.');
+    const group = this.config.groups.find(g => g.id === id);
+    if (!group) throw new Error('그룹을 찾을 수 없습니다.');
+    group.name = name.trim(); await this.persist();
+  }
   async removeApp(id) { await this.ready; return this.serial(id, async () => { await this.stopProcess(id); for (const g of this.config.groups) g.apps = g.apps.filter(a => a.id !== id); delete this.config.overrides[id]; await this.persist(); }); }
   async env(id, mode) {
     await this.ready; this.mode(mode); const app = this.app(id); let base = {};

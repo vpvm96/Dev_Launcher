@@ -36,7 +36,7 @@ function render() {
   $('groups').replaceChildren(...state.groups.map((group) => { const node = button('', () => { state.group = group.id; render(); }, `group-button${group.id === state.group ? ' active' : ''}`); node.append(el('span', '', group.name), el('span', '', String(group.apps.length))); node.setAttribute('aria-current', group.id === state.group ? 'page' : 'false'); return node; }));
   const group = currentGroup(); const apps = group?.apps || [];
   $('group-title').textContent = group?.name || '나의 개발 워크스페이스'; $('group-description').textContent = group ? '필요한 프로젝트를 선택하고 작업을 시작하세요.' : '첫 번째 그룹을 추가해서 시작하세요.';
-  $('add-app').disabled = !group; $('group-mode').disabled = !group; $('app-count').textContent = String(apps.length); $('running-count').textContent = `${apps.filter(active).length}개 실행 중`;
+  $('rename-group').disabled = !group; $('add-app').disabled = !group; $('group-mode').disabled = !group; $('app-count').textContent = String(apps.length); $('running-count').textContent = `${apps.filter(active).length}개 실행 중`;
   const modes = new Set(apps.map(mode)); const mixed = $('group-mode').querySelector('[value=mixed]'); if (mixed) mixed.remove(); if (modes.size > 1) { const option = el('option', '', '개별 설정'); option.value = 'mixed'; $('group-mode').append(option); $('group-mode').value = 'mixed'; } else $('group-mode').value = [...modes][0] || 'dev';
   $('apps').replaceChildren(...apps.map(renderApp));
   if (!apps.length) { const empty = el('div', 'empty'); empty.append(el('h2', '', group ? '프로젝트를 연결해 주세요.' : '작업을 그룹으로 모아보세요.'), el('p', '', group ? '프로젝트 폴더를 선택하면 실행 명령과 환경 파일을 찾아드려요.' : 'Dearmonday, Powderroom처럼 함께 켤 프로젝트를 묶어주세요.'), button(group ? '＋ 프로젝트 폴더 선택' : '＋ 첫 그룹 만들기', group ? addApp : addGroup, 'primary')); $('apps').append(empty); }
@@ -44,7 +44,7 @@ function render() {
 }
 function renderApp(app) {
   const card = el('article', 'app-card'); const top = el('div', 'card-top'); const check = el('input'); check.type = 'checkbox'; check.checked = state.selected.get(app.id); check.setAttribute('aria-label', `${app.name} 선택`); check.dataset.focus = `${app.id}-select`; check.addEventListener('change', () => { state.selected.set(app.id, check.checked); counts(); });
-  const info = el('div', 'app-info'); info.append(el('div', 'app-name', app.name), el('div', 'app-path', app.path)); info.lastChild.title = app.path;
+  const info = el('div', 'app-info'); info.append(el('div', 'app-name', app.name), el('div', 'app-path', app.path)); info.lastChild.title = app.path; const rename = button('이름 변경', () => renameItem(app, false), 'rename-button'); rename.setAttribute('aria-label', `${app.name} 이름 변경`); rename.dataset.focus = `${app.id}-rename`; info.firstChild.append(rename);
   const status = el('span', 'status'); status.append(el('span', `dot ${app.status}`), document.createTextNode(state.busy.has(app.id) ? '처리 중…' : ({ running: '실행 중', launching: '시작 중', error: '실행 실패', stopped: '중지됨' }[app.status] || '중지됨')));
   top.append(check, el('div', 'app-icon', app.name.slice(0, 1).toUpperCase()), info, status);
   const bottom = el('div', 'card-bottom'); const modeArea = el('div', 'mode-area'); const select = el('select', mode(app) === 'prod' ? 'prod' : ''); select.setAttribute('aria-label', `${app.name} 실행 환경`); select.dataset.focus = `${app.id}-mode`;
@@ -63,6 +63,19 @@ function field(label, value = '', placeholder = '') { const wrapper = el('label'
 function submitButton(label, handler) { const node = button(label, async () => { node.disabled = true; try { await handler(); } catch (error) { toast(error.message || String(error), true); } finally { node.disabled = false; } }, 'primary'); $('modal-actions').append(node); return node; }
 function addGroup() { modal('새 프로젝트 그룹'); const name = field('그룹 이름', '', '예. Powderroom'); $('modal-body').append(name.wrapper); const save = submitButton('그룹 만들기', async () => { if (!name.input.value.trim()) { name.input.focus(); return; } const result = await api.addGroup(name.input.value.trim()); state.group = result?.id || null; closeModal(); await refresh(true); }); name.input.addEventListener('keydown', (event) => { if (event.key === 'Enter') save.click(); }); name.input.focus(); }
 async function addApp() { await attempt(async () => { const groupId = state.group; const config = await api.chooseProject(); if (!config) return; modal('프로젝트 연결', 'PROJECT SETUP'); const name = field('프로젝트 이름', config.name || ''); const path = el('p', 'help', config.path); const dev = field('DEV 스크립트 이름', config.scripts?.dev || '', 'start:dev'); const prod = field('PROD 스크립트 이름', config.scripts?.prod || '', 'start:prod'); const devEnv = field('DEV 환경 파일', config.envFiles?.dev || '', '.env.development'); const prodEnv = field('PROD 환경 파일', config.envFiles?.prod || '', '.env.production'); const commands = el('div', 'field-grid'); commands.append(dev.wrapper, prod.wrapper); const envs = el('div', 'field-grid'); envs.append(devEnv.wrapper, prodEnv.wrapper); $('modal-body').append(path, name.wrapper, commands, envs, el('p', 'help', 'package.json의 scripts 이름을 입력하세요. 예. start:dev, dev. 환경 파일은 프로젝트 기준 상대 경로를 입력하세요.')); submitButton('프로젝트 연결', async () => { if (!name.input.value.trim() || !dev.input.value.trim()) throw new Error('프로젝트 이름과 DEV 실행 명령을 입력해 주세요.'); await api.addApp(groupId, { ...config, name: name.input.value.trim(), scripts: { dev: dev.input.value.trim(), prod: prod.input.value.trim() }, envFiles: { dev: devEnv.input.value.trim(), prod: prodEnv.input.value.trim() } }); closeModal(); await refresh(true); }); }); }
+function renameItem(item, isGroup) {
+  modal(isGroup ? '그룹 이름 변경' : '프로젝트 이름 변경');
+  const name = field(isGroup ? '그룹 이름' : '프로젝트 이름', item.name);
+  const error = el('p', 'inline-error'); error.setAttribute('role', 'alert');
+  $('modal-body').append(name.wrapper, error);
+  const save = submitButton('이름 저장', async () => {
+    if (!name.input.value.trim()) { error.textContent = '이름을 입력해 주세요.'; name.input.focus(); return; }
+    await api[isGroup ? 'renameGroup' : 'renameApp'](item.id, name.input.value.trim());
+    closeModal(); await refresh(true); toast('이름을 변경했어요.');
+  });
+  name.input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); save.click(); } });
+  name.input.focus(); name.input.select();
+}
 function removeApp(app) { modal('프로젝트 등록 해제'); $('modal-body').append(el('p', 'help', `${app.name}을(를) 이 그룹에서 제거합니다. 프로젝트 폴더와 원본 환경 파일은 유지됩니다.`)); submitButton('등록 해제', async () => { await api.removeApp(app.id); closeModal(); await refresh(true); }); }
 async function showLogs(app) { modal(`${app.name} 로그`, `${(app.mode || mode(app)).toUpperCase()} / PROCESS OUTPUT`); const output = el('pre', 'log-output', '로그 불러오는 중…'); output.id = 'log-output'; $('modal-body').append(output); state.logs = app.id; await attempt(async () => { const logs = await api.logs(app.id); if (state.logs === app.id) output.textContent = logs || '아직 출력된 로그가 없습니다.'; }); }
 async function editEnv(app) {
@@ -86,6 +99,7 @@ async function editEnv(app) {
   const save = async (restart) => { await api.saveEnv(app.id, selectedMode, overrides); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true); };
   submitButton('설정 저장', () => save(false)); if (active(app)) submitButton(app.mode && app.mode !== selectedMode ? `저장 후 ${selectedMode.toUpperCase()}로 재시작` : '저장 후 재시작', () => save(true));
 }
+$('rename-group').addEventListener('click', () => { const group = currentGroup(); if (group) renameItem(group, true); });
 $('add-group').addEventListener('click', addGroup); $('add-app').addEventListener('click', addApp); $('close-modal').addEventListener('click', closeModal); $('modal').addEventListener('close', () => { state.logs = null; });
 $('group-mode').addEventListener('change', () => { const value = $('group-mode').value; if (value === 'mixed') return; for (const app of currentGroup()?.apps || []) state.modes.set(app.id, value); render(); toast(`${value.toUpperCase()} 환경을 선택했어요. 다음 실행 또는 재시작 시 적용됩니다.`); });
 $('start-selected').addEventListener('click', () => { const apps = (currentGroup()?.apps || []).filter((app) => state.selected.get(app.id)); void Promise.all(apps.map((app) => action(app, active(app) && app.mode !== mode(app) ? 'restart' : 'start'))); });

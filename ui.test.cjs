@@ -66,9 +66,37 @@ test('environment editor saves an override and restarts only its service', { tim
   await expect.poll(async () => JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).api).toBe('https://dev.example');
   assert.equal(await fs.readFile(path.join(project, '.env'), 'utf8'), 'PRESERVE=original\n');
   await page.locator('#add-group').click();
-  await page.getByLabel('그룹 이름').fill('Another Project');
+  await page.getByLabel('그룹 이름', { exact: true }).fill('Another Project');
   await page.getByRole('button', { name: '그룹 만들기' }).click();
   await expect(page.locator('#group-title')).toHaveText('Another Project');
   await expect(page.locator('#apps')).toContainText('프로젝트를 연결해 주세요.');
+  assert.deepEqual(errors, []);
+});
+
+test('renaming preserves a running service and persists project and group names', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await page.locator('#start-selected').click();
+  await expect.poll(async () => { try { return JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid; } catch { return 0; } }).toBeGreaterThan(0);
+  const before = JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8'));
+  await page.getByRole('button', { name: 'user 이름 변경', exact: true }).click();
+  await page.getByLabel('프로젝트 이름', { exact: true }).fill('   ');
+  await page.getByRole('button', { name: '이름 저장' }).click();
+  await expect(page.getByRole('alert')).toHaveText('이름을 입력해 주세요.');
+  await page.getByLabel('프로젝트 이름', { exact: true }).fill('고객 화면');
+  await page.getByRole('button', { name: '이름 저장' }).click();
+  await expect(page.getByLabel('고객 화면 선택', { exact: true })).toBeChecked();
+  await page.getByRole('button', { name: '그룹 이름 변경', exact: true }).click();
+  await page.getByLabel('그룹 이름', { exact: true }).fill('새 그룹 이름');
+  await page.getByRole('button', { name: '이름 저장' }).click();
+  await expect(page.locator('#group-title')).toHaveText('새 그룹 이름');
+  await page.reload();
+  await expect(page.locator('#group-title')).toHaveText('새 그룹 이름');
+  await expect(page.getByLabel('고객 화면 선택', { exact: true })).toBeChecked();
+  await expect(page.locator('#running-count')).toContainText('1');
+  const config = JSON.parse(await fs.readFile(path.join(project, '../data/config.json'), 'utf8'));
+  assert.equal(config.groups[0].name, '새 그룹 이름');
+  assert.equal(config.groups[0].apps[0].name, '고객 화면');
+  assert.equal(config.groups[0].apps[0].path, project);
+  assert.equal(JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid, before.pid);
   assert.deepEqual(errors, []);
 });

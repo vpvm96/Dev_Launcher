@@ -21,7 +21,7 @@ else {
       if (event.sender !== window?.webContents || event.senderFrame.url !== page) throw new Error('허용되지 않은 요청입니다.');
       return fn(...args);
     });
-    for (const method of ['list', 'addGroup', 'addApp', 'removeApp', 'env', 'saveEnv', 'start', 'stop', 'restart', 'logs']) {
+    for (const method of ['list', 'addGroup', 'addApp', 'removeApp', 'renameApp', 'renameGroup', 'env', 'saveEnv', 'start', 'stop', 'restart', 'logs']) {
       handle(method, (...args) => engine[method](...args));
     }
     handle('chooseProject', async () => {
