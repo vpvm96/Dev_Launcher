@@ -1,22 +1,67 @@
 {
   "name": "dev-launcher",
   "productName": "Dev Launcher",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "프로젝트 그룹과 로컬 개발 환경을 관리하는 데스크톱 앱",
   "main": "main.cjs",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node --test engine.test.cjs",
-    "package": "electron-packager . 'Dev Launcher' --platform=darwin --arch=arm64 --out=dist --overwrite --ignore='(^|/)(dist|.*test\\.cjs|README\\.md|\\.git)($|/)' --icon=assets/AppIcon.icns",
-    "test:ui": "node --test ui.test.cjs"
+    "test": "node --test engine.test.cjs updater.test.cjs",
+    "package": "electron-builder --mac --arm64 --publish never -c.mac.notarize=false",
+    "test:ui": "node --test ui.test.cjs",
+    "package:release": "node scripts/package-release.cjs",
+    "release:publish": "node scripts/publish-release.cjs"
   },
   "dependencies": {
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
-    "@electron/packager": "^20.3.0",
     "@playwright/test": "^1.63.0",
-    "electron": "^44.2.0"
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "author": "vpvm96",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vpvm96/Dev_Launcher.git"
+  },
+  "build": {
+    "appId": "com.vpvm96.devlauncher",
+    "productName": "Dev Launcher",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "engine.cjs",
+      "updater.cjs",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "assets/icon.png",
+      "package.json"
+    ],
+    "forceCodeSigning": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/AppIcon.icns",
+      "hardenedRuntime": true,
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Dev-Launcher-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "vpvm96",
+        "repo": "Dev_Launcher",
+        "releaseType": "release"
+      }
+    ]
   }
 }

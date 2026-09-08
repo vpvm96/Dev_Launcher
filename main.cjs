@@ -4,6 +4,8 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 const { Engine } = require('./engine.cjs');
+const { autoUpdater } = require('electron-updater');
+const { createUpdater } = require('./updater.cjs');
 let engine, window, quitting = false, restarting = false;
 const page = pathToFileURL(path.join(__dirname, 'index.html')).href;
 app.setName('Dev Launcher');
@@ -17,6 +19,9 @@ else {
       process.env.PATH = execFileSync('/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 5000 }).trim();
     } catch { /* 현재 프로세스의 PATH를 유지한다. */ }
     engine = new Engine({ dataDir: process.env.DEV_LAUNCHER_DATA_DIR || app.getPath('userData'), openBrowser: url => shell.openExternal(url) });
+    const updates = createUpdater({ autoUpdater, isPackaged: app.isPackaged, version: app.getVersion(), beforeInstall: async () => {
+      await engine.shutdown(); quitting = true;
+    } });
     const handle = (name, fn) => ipcMain.handle(name, async (event, ...args) => {
       if (event.sender !== window?.webContents || event.senderFrame.url !== page) throw new Error('허용되지 않은 요청입니다.');
       return fn(...args);
@@ -24,6 +29,10 @@ else {
     for (const method of ['list', 'setAutoOpen', 'addGroup', 'addApp', 'removeApp', 'renameApp', 'renameGroup', 'env', 'saveEnv', 'start', 'stop', 'restart', 'logs']) {
       handle(method, (...args) => engine[method](...args));
     }
+    handle('updateStatus', () => updates.status());
+    handle('checkUpdate', () => updates.check());
+    handle('downloadUpdate', () => updates.download());
+    handle('installUpdate', () => updates.install());
     handle('restartApp', () => {
       if (restarting || quitting) return;
       restarting = true;
@@ -50,6 +59,10 @@ else {
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     await window.loadFile('index.html');
+    if (app.isPackaged && !process.env.DEV_LAUNCHER_DATA_DIR) {
+      setTimeout(() => { void updates.check().catch(() => {}); }, 10000).unref();
+      setInterval(() => { void updates.check().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
+    }
   }).catch(error => { dialog.showErrorBox('Dev Launcher 시작 실패', error.message); app.quit(); });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {

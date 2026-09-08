@@ -31,15 +31,6 @@ class Engine {
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
       this.config = { groups: [], overrides: {} };
-      const root = path.join(os.homedir(), 'Documents/projects');
-      for (const [name, folders] of [['Dearmonday', ['dearmonday-user', 'dearmonday-admin-v2', 'dearmonday-partner-v2', 'dearmonday-org-v2', 'dearmonday-campaign-v2']], ['Powderroom', ['powderroom-user-front', 'powderroom-admin', 'pawderroom-web-vendor']]]) {
-        const group = { id: randomUUID(), name, apps: [] };
-        for (const folder of folders) {
-          try { const app = await this.discover(path.join(root, folder)); group.apps.push({ ...app, id: randomUUID(), name: folder.replace(/^(dearmonday-|powderroom-|pawderroom-web-)/, '').replace(/-v2$|-front$/, '') }); }
-          catch (error) { if (error.code !== 'ENOENT') throw error; }
-        }
-        if (group.apps.length) this.config.groups.push(group);
-      }
       await this.persist();
     }
     let changed = false;

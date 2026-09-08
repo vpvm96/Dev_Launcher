@@ -155,3 +155,15 @@ test('app restart shuts down managed servers before scheduling relaunch', { time
   await closed;
   assert.deepEqual(JSON.parse(await fs.readFile(marker, 'utf8')), { alive: false });
 });
+
+test('update dialog shows current version and the available release', { timeout: 40000 }, async t => {
+  const { page, instance } = await setup(t);
+  await page.locator('#updates').click();
+  await expect(page.locator('#modal-body')).toContainText('현재 버전 1.1.0');
+  await instance.evaluate(() => {
+    const require = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    require('electron-updater').autoUpdater.emit('update-available', { version: '1.2.0' });
+  });
+  await expect(page.getByRole('button', { name: '업데이트 다운로드', exact: true })).toBeVisible();
+  await expect(page.locator('#update-summary')).toHaveText('새 버전 1.2.0');
+});
