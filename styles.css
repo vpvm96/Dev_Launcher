@@ -4,3 +4,56 @@
 .window-drag{position:fixed;top:0;left:0;right:0;height:28px;-webkit-app-region:drag;z-index:2}
 
 .group-heading,.app-name{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.rename-button{font-size:11px;font-weight:400;min-height:28px;padding:4px 8px;background:transparent;color:var(--muted)}
+
+/* 기본 선택 동작을 유지하면서 메뉴와 화살표를 앱 테마에 맞춘다. */
+select, select::picker(select) { appearance: base-select; }
+select, .mode-area select {
+  padding-inline: 12px 16px;
+  gap: 20px;
+  align-items: center;
+  transition: border-color .15s, background .15s;
+}
+select:hover { background: #1c2823; border-color: #577064; }
+select:open { border-color: var(--mint); background: #19251f; }
+select::picker-icon {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  rotate: 45deg;
+  translate: 0 -2px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+select:open::picker-icon { rotate: 225deg; translate: 0 2px; color: var(--mint); }
+select::picker(select) {
+  margin-block: 6px;
+  padding: 6px;
+  border: 1px solid #42564b;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 32px #0007;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #53685d transparent;
+}
+select option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 400;
+  color: var(--text);
+  cursor: pointer;
+}
+select option:checked { background: #263b30; color: var(--mint); font-weight: 600; }
+select option:hover, select option:focus { background: #334b3d; outline: none; }
+select option::checkmark { order: 1; margin-left: auto; color: var(--mint); }
+select:disabled { opacity: .4; cursor: default; }
+@media (prefers-reduced-motion: reduce) { select { transition: none; } }
