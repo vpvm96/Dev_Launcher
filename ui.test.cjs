@@ -328,3 +328,24 @@ test('unchecked overrides survive saving, filtering and reopening while values s
   assert.equal(await page.evaluate(() => window.launcher.env('test-app', 'dev').then(value => value.overrides.API_URL)), 'http://localhost:8899');
   assert.deepEqual(errors, []);
 });
+
+
+test('log dialog opens at the latest line and preserves manual scrolling on updates', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await fs.writeFile(path.join(project, 'server.cjs'), "// 긴 로그를 출력하는 테스트 서버입니다.\nconsole.log(Array.from({length:200},(_,i)=>'log line '+i).join('\\n'));setInterval(()=>console.log('latest line'),300);");
+  await page.locator('#start-selected').click();
+  await expect.poll(() => page.evaluate(() => window.launcher.logs('test-app'))).toContain('log line 199');
+  await page.getByRole('button', { name: '로그', exact: true }).click();
+  const body = page.locator('#modal-body');
+  const bottomGap = () => body.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop);
+  await expect.poll(bottomGap).toBeLessThan(2);
+  await expect.poll(() => body.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
+  await body.evaluate(node => { node.scrollTop = 0; });
+  const before = await page.locator('#log-output').textContent();
+  await expect.poll(() => page.locator('#log-output').textContent()).not.toBe(before);
+  await expect.poll(() => body.evaluate(node => node.scrollTop)).toBe(0);
+  await page.locator('#close-modal').click();
+  await page.getByRole('button', { name: '로그', exact: true }).click();
+  await expect.poll(bottomGap).toBeLessThan(2);
+  assert.deepEqual(errors, []);
+});

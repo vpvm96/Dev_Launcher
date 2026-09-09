@@ -83,7 +83,7 @@ function renameItem(item, isGroup) {
   name.input.focus(); name.input.select();
 }
 function removeApp(app) { modal('프로젝트 등록 해제'); $('modal-body').append(el('p', 'help', `${app.name}을(를) 이 그룹에서 제거합니다. 프로젝트 폴더와 원본 환경 파일은 유지됩니다.`)); submitButton('등록 해제', async () => { await api.removeApp(app.id); closeModal(); await refresh(true); }); }
-async function showLogs(app) { modal(`${app.name} 로그`, `${(app.mode || mode(app)).toUpperCase()} / PROCESS OUTPUT`); const output = el('pre', 'log-output', '로그 불러오는 중…'); output.id = 'log-output'; $('modal-body').append(output); state.logs = app.id; await attempt(async () => { const logs = await api.logs(app.id); if (state.logs === app.id) output.textContent = logs || '아직 출력된 로그가 없습니다.'; }); }
+async function showLogs(app) { modal(`${app.name} 로그`, `${(app.mode || mode(app)).toUpperCase()} / PROCESS OUTPUT`); const output = el('pre', 'log-output', '로그 불러오는 중…'); output.id = 'log-output'; $('modal-body').append(output); state.logs = app.id; await attempt(async () => { const logs = await api.logs(app.id); if (state.logs === app.id) { output.textContent = logs || '아직 출력된 로그가 없습니다.'; $('modal-body').scrollTop = $('modal-body').scrollHeight; } }); }
 async function editEnv(app) {
   const selectedMode = mode(app); modal(`${app.name} 환경 설정`, `${selectedMode.toUpperCase()} / LOCAL OVERRIDES`); $('modal-body').append(el('p', 'help', '환경 설정 불러오는 중…'));
   const revision = state.modalRevision; const data = await api.env(app.id, selectedMode); if (!$('modal').open || state.modalRevision !== revision) return;
