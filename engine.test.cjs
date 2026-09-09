@@ -39,6 +39,56 @@ test('persists isolated overrides privately without changing env files', async t
   await assert.rejects(fs.access(path.join(project, 'injected')));
   await engine.stop(app.id); assert.throws(() => process.kill(values.pid, 0), /ESRCH/);
 });
+test('retains disabled overrides across reloads while runtime uses defaults until reenabled', async t => {
+  const { engine, app, project, dataDir } = await fixture(t);
+  await engine.saveEnv(app.id, 'dev', { API_URL: 'http://localhost:8080' });
+  await engine.saveEnv(app.id, 'dev', {}, undefined, undefined, { API_URL: 'http://localhost:9090', UNSAVED_KEY: '', TOKEN: '' });
+  const loaded = new Engine({ dataDir });
+  try {
+    const values = await loaded.env(app.id, 'dev');
+    assert.deepEqual(values.overrides, {});
+    assert.deepEqual(values.drafts, { API_URL: 'http://localhost:9090', UNSAVED_KEY: '', TOKEN: '' });
+    assert.deepEqual((await loaded.env(app.id, 'prod')).drafts, {});
+    await loaded.start(app.id, 'dev');
+    const defaults = await observed(project);
+    assert.equal(defaults.url, 'https://dev.example');
+    assert.equal(defaults.token, 'base-token-private');
+    await loaded.stop(app.id);
+    await fs.unlink(path.join(project, 'observed.json'));
+    await loaded.saveEnv(app.id, 'dev', { API_URL: values.drafts.API_URL, TOKEN: values.drafts.TOKEN });
+    await loaded.start(app.id, 'dev');
+    const custom = await observed(project);
+    assert.equal(custom.url, 'http://localhost:9090');
+    assert.equal(custom.token, '');
+    await loaded.removeApp(app.id);
+    const stored = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'));
+    assert.equal(stored.overrideDrafts[app.id], undefined);
+    assert.equal(stored.overrides[app.id], undefined);
+  } finally { await loaded.shutdown(); }
+});
+test('legacy active values seed drafts and remain retained when omitted from later saves', async t => {
+  const { engine, app } = await fixture(t);
+  engine.config.overrides[app.id] = { dev: { API_URL: 'legacy-value' } };
+  assert.deepEqual((await engine.env(app.id, 'dev')).drafts, { API_URL: 'legacy-value' });
+  await engine.saveEnv(app.id, 'dev', {});
+  assert.deepEqual((await engine.env(app.id, 'dev')).drafts, { API_URL: 'legacy-value' });
+  await engine.saveEnv(app.id, 'dev', { API_URL: 'active-value' }, undefined, undefined, { API_URL: 'stale-draft' });
+  assert.equal((await engine.env(app.id, 'dev')).drafts.API_URL, 'active-value');
+  await engine.saveEnv(app.id, 'prod', {}, undefined, undefined, { API_URL: 'prod-draft' });
+  assert.equal((await engine.env(app.id, 'dev')).drafts.API_URL, 'active-value');
+  assert.equal((await engine.env(app.id, 'prod')).drafts.API_URL, 'prod-draft');
+});
+test('rejects invalid drafts before changing active overrides or execution settings', async t => {
+  const { engine, app, dataDir } = await fixture(t);
+  await engine.saveEnv(app.id, 'dev', { API_URL: 'original' });
+  const before = JSON.stringify(engine.config);
+  const persisted = await fs.readFile(path.join(dataDir, 'config.json'), 'utf8');
+  for (const drafts of [null, [], 'value', { 'BAD-NAME': 'value' }, { TOKEN: 1 }, { TOKEN: 'bad\0value' }]) {
+    await assert.rejects(engine.saveEnv(app.id, 'dev', { API_URL: 'changed' }, 'start:prod', { enabled: false }, drafts), /환경/);
+    assert.equal(JSON.stringify(engine.config), before);
+    assert.equal(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'), persisted);
+  }
+});
 test('serializes concurrent starts and switches mode through restart', async t => {
   const { engine, app, project } = await fixture(t);
   await Promise.all([engine.start(app.id, 'dev'), engine.start(app.id, 'dev')]);

@@ -87,7 +87,7 @@ async function showLogs(app) { modal(`${app.name} 로그`, `${(app.mode || mode(
 async function editEnv(app) {
   const selectedMode = mode(app); modal(`${app.name} 환경 설정`, `${selectedMode.toUpperCase()} / LOCAL OVERRIDES`); $('modal-body').append(el('p', 'help', '환경 설정 불러오는 중…'));
   const revision = state.modalRevision; const data = await api.env(app.id, selectedMode); if (!$('modal').open || state.modalRevision !== revision) return;
-  $('modal-body').replaceChildren(); const overrides = Object.assign(Object.create(null), data.overrides); const bases = new Map(data.base.map(({ key, value }) => [key, value])); const keys = [...new Set([...bases.keys(), ...Object.keys(overrides)])];
+  $('modal-body').replaceChildren(); const overrides = Object.assign(Object.create(null), data.overrides); const drafts = Object.assign(Object.create(null), data.drafts, data.overrides); const bases = new Map(data.base.map(({ key, value }) => [key, value])); const keys = [...new Set([...bases.keys(), ...Object.keys(drafts), ...Object.keys(overrides)])];
   const scriptField = el('label', 'field', `${selectedMode.toUpperCase()} 실행 스크립트`);
   const scriptSelect = el('select'); scriptSelect.setAttribute('aria-label', `${selectedMode.toUpperCase()} 실행 스크립트`);
   for (const key of [...new Set([data.script, ...data.availableScripts])]) { const option = el('option', '', key || '스크립트 선택'); option.value = key; scriptSelect.append(option); }
@@ -114,14 +114,14 @@ async function editEnv(app) {
     filter.value = ''; drawRows(); toast('DB_HOST와 DB_PORT에 로컬 접속 주소를 입력했어요. 설정을 저장해 주세요.');
   }), el('p', 'help', 'DB 주소 적용을 누르면 DB_HOST=127.0.0.1, DB_PORT=로컬 포트를 개인 환경변수로 설정합니다. 원본 환경 파일은 수정하지 않습니다.'));
   tunnelSection.append(tunnelFields); $('modal-body').append(tunnelSection);
-  $('modal-body').append(el('p', 'help', '기본 환경 파일 위에 개인 설정을 적용합니다. 체크를 끄면 기본값을 사용하고, 체크한 채 비워두면 빈 문자열을 적용합니다.'));
-  const tools = el('div', 'env-tools'); const filter = el('input'); filter.type = 'search'; filter.placeholder = '환경변수 검색'; filter.setAttribute('aria-label', '환경변수 검색'); const revealLabel = el('label', 'check-label'); const reveal = el('input'); reveal.type = 'checkbox'; revealLabel.append(reveal, document.createTextNode('값 표시')); tools.append(filter, revealLabel); const rows = el('div'); $('modal-body').append(tools, rows);
+  $('modal-body').append(el('p', 'help', '기본 환경 파일 위에 개인 설정을 적용합니다. 체크를 끄면 기본값을 사용하며 직접 입력한 값은 다음 사용을 위해 보관합니다. 체크한 채 비워두면 빈 문자열을 적용합니다.'));
+  const tools = el('div', 'env-tools'); const filter = el('input'); filter.type = 'search'; filter.placeholder = '환경변수 검색'; filter.setAttribute('aria-label', '환경변수 검색'); const revealLabel = el('label', 'check-label'); const reveal = el('input'); reveal.type = 'checkbox'; reveal.checked = true; revealLabel.append(reveal, document.createTextNode('값 표시')); tools.append(filter, revealLabel); const rows = el('div'); $('modal-body').append(tools, rows);
   function drawRows() {
     rows.replaceChildren(); const matching = keys.filter((key) => key.toLowerCase().includes(filter.value.toLowerCase()));
     if (!matching.length) rows.append(el('p', 'help', keys.length ? '검색 결과가 없습니다.' : '환경변수가 없습니다. 아래에서 새 변수를 추가하세요.'));
     for (const key of matching) {
       const row = el('div', 'env-row'); row.append(el('strong', 'env-key', key), el('div', 'base-value', `기본값 · ${bases.has(key) ? (reveal.checked ? bases.get(key) || '(빈 값)' : '••••••••') : '(새 변수)'}`));
-      const controls = el('div', 'override-controls'); const label = el('label', 'check-label'); const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = Object.hasOwn(overrides, key); label.append(toggle, document.createTextNode('직접 설정')); const value = el('input'); value.type = reveal.checked ? 'text' : 'password'; value.autocomplete = 'off'; value.spellcheck = false; value.value = overrides[key] ?? ''; value.disabled = !toggle.checked; value.placeholder = toggle.checked ? '빈 값으로 적용' : '기본값 사용'; value.setAttribute('aria-label', `${key} 개인 설정`); toggle.addEventListener('change', () => { value.disabled = !toggle.checked; if (toggle.checked) { overrides[key] = value.value; value.focus(); } else delete overrides[key]; }); value.addEventListener('input', () => { overrides[key] = value.value; }); controls.append(label, value); row.append(controls);
+      const controls = el('div', 'override-controls'); const label = el('label', 'check-label'); const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = Object.hasOwn(overrides, key); label.append(toggle, document.createTextNode('직접 설정')); const value = el('input'); value.type = reveal.checked ? 'text' : 'password'; value.autocomplete = 'off'; value.spellcheck = false; value.value = overrides[key] ?? drafts[key] ?? ''; value.disabled = !toggle.checked; value.placeholder = toggle.checked ? '빈 값으로 적용' : '기본값 사용'; value.setAttribute('aria-label', `${key} 개인 설정`); toggle.addEventListener('change', () => { drafts[key] = value.value; value.disabled = !toggle.checked; value.placeholder = toggle.checked ? '빈 값으로 적용' : '기본값 사용'; if (toggle.checked) { overrides[key] = value.value; value.focus(); } else delete overrides[key]; }); value.addEventListener('input', () => { drafts[key] = value.value; overrides[key] = value.value; }); controls.append(label, value); row.append(controls);
       if (/API.*(URL|HOST)|BASE.*URL|API_URL/i.test(key)) row.append(button('로컬 주소 입력', () => { toggle.checked = true; value.disabled = false; value.value = 'http://localhost:8080'; value.type = 'text'; overrides[key] = value.value; value.focus(); value.select(); }, 'quick-api'));
       rows.append(row);
     }
@@ -131,7 +131,7 @@ async function editEnv(app) {
   const save = async (restart) => {
     if (tunnelEnabled.checked) for (const input of Object.values(tunnelInputs)) { input.required = true; if (!input.reportValidity()) return; }
     const tunnel = { enabled: tunnelEnabled.checked, ...Object.fromEntries(Object.entries(tunnelInputs).map(([key, input]) => [key, key.endsWith('Port') ? Number(input.value) : input.value.trim()])) };
-    await api.saveEnv(app.id, selectedMode, overrides, scriptSelect.value || undefined, tunnel); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true);
+    await api.saveEnv(app.id, selectedMode, overrides, scriptSelect.value || undefined, tunnel, drafts); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true);
   };
   submitButton('설정 저장', () => save(false)); if (active(app)) submitButton(app.mode && app.mode !== selectedMode ? `저장 후 ${selectedMode.toUpperCase()}로 재시작` : '저장 후 재시작', () => save(true));
 }

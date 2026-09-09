@@ -50,7 +50,7 @@ test('environment editor saves an override and restarts only its service', { tim
   await expect.poll(async () => { try { return JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid; } catch { return 0; } }).toBeGreaterThan(0);
   const before = JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8'));
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
-  await expect(page.getByLabel('API_URL 개인 설정')).toHaveAttribute('type', 'password');
+  await expect(page.getByLabel('API_URL 개인 설정')).toHaveAttribute('type', 'text');
   await page.getByRole('button', { name: '로컬 주소 입력' }).click();
   await page.getByLabel('API_URL 개인 설정').fill('http://localhost:8899');
   await page.getByRole('button', { name: '저장 후 재시작', exact: true }).click();
@@ -295,4 +295,36 @@ test('background updates show a notice and downloaded updates open the install a
     require('electron-updater').autoUpdater.emit('update-not-available');
   });
   await expect(page.locator('#update-notice')).toBeHidden();
+});
+
+
+test('unchecked overrides survive saving, filtering and reopening while values show by default', { timeout: 40000 }, async t => {
+  const { page, errors } = await setup(t);
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  const input = page.getByLabel('API_URL 개인 설정', { exact: true });
+  const row = page.locator('.env-row').filter({ hasText: 'API_URL' });
+  await expect(page.getByLabel('값 표시', { exact: true })).toBeChecked();
+  await expect(input).toHaveAttribute('type', 'text');
+  await row.getByRole('checkbox').check();
+  await input.fill('http://localhost:8899');
+  await row.getByRole('checkbox').uncheck();
+  await page.getByLabel('환경변수 검색').fill('PORT');
+  await page.getByLabel('환경변수 검색').fill('');
+  await expect(input).toHaveValue('http://localhost:8899');
+  await expect(input).toBeDisabled();
+  await page.getByLabel('값 표시', { exact: true }).uncheck();
+  await expect(input).toHaveAttribute('type', 'password');
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await expect(page.getByLabel('값 표시', { exact: true })).toBeChecked();
+  await expect(input).toHaveAttribute('type', 'text');
+  await expect(input).toHaveValue('http://localhost:8899');
+  await expect(row.getByRole('checkbox')).not.toBeChecked();
+  await expect(input).toBeDisabled();
+  assert.deepEqual(await page.evaluate(() => window.launcher.env('test-app', 'dev').then(value => value.overrides)), {});
+  await row.getByRole('checkbox').check();
+  await expect(input).toHaveValue('http://localhost:8899');
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.launcher.env('test-app', 'dev').then(value => value.overrides.API_URL)), 'http://localhost:8899');
+  assert.deepEqual(errors, []);
 });

@@ -127,17 +127,19 @@ class Engine {
     if (!group) throw new Error('그룹을 찾을 수 없습니다.');
     group.name = name.trim(); await this.persist();
   }
-  async removeApp(id) { await this.ready; return this.serial(id, async () => { await this.stopProcess(id); for (const g of this.config.groups) g.apps = g.apps.filter(a => a.id !== id); delete this.config.overrides[id]; await this.persist(); }); }
+  async removeApp(id) { await this.ready; return this.serial(id, async () => { await this.stopProcess(id); for (const g of this.config.groups) g.apps = g.apps.filter(a => a.id !== id); delete this.config.overrides[id]; if (this.config.overrideDrafts) delete this.config.overrideDrafts[id]; await this.persist(); }); }
   async env(id, mode) {
     await this.ready; this.mode(mode); const app = this.app(id); let base = {};
     if (app.envFiles[mode]) base = parse(await fs.readFile(path.resolve(app.path, app.envFiles[mode])));
     const pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
-    return { tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) } };
+    return { tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) }, drafts: { ...this.config.overrideDrafts?.[id]?.[mode], ...this.config.overrides[id]?.[mode] } };
   }
-  async saveEnv(id, mode, overrides, script, tunnel) {
+  async saveEnv(id, mode, overrides, script, tunnel, drafts) {
     await this.ready; this.app(id); this.mode(mode);
-    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) throw new Error('환경 설정 형식이 올바르지 않습니다.');
-    for (const [key, value] of Object.entries(overrides)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string' || value.includes('\0')) throw new Error('환경변수 이름 또는 값이 올바르지 않습니다.');
+    for (const values of drafts === undefined ? [overrides] : [overrides, drafts]) {
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('환경 설정 형식이 올바르지 않습니다.');
+      for (const [key, value] of Object.entries(values)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string' || value.includes('\0')) throw new Error('환경변수 이름 또는 값이 올바르지 않습니다.');
+    }
     const tunnelConfig = tunnel === undefined ? undefined : validateTunnel(tunnel);
     if (script !== undefined) {
       const app = this.app(id), pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
@@ -145,6 +147,8 @@ class Engine {
       app.scripts[mode] = script; app.ports ||= {}; app.ports[mode] = recipe(pkg.scripts[script]).port;
     }
     if (tunnelConfig !== undefined) { this.app(id).tunnels ||= {}; this.app(id).tunnels[mode] = tunnelConfig; }
+    this.config.overrideDrafts ||= {}; this.config.overrideDrafts[id] ||= {};
+    this.config.overrideDrafts[id][mode] = { ...this.config.overrideDrafts[id][mode], ...this.config.overrides[id]?.[mode], ...drafts, ...overrides };
     this.config.overrides[id] ||= {}; this.config.overrides[id][mode] = { ...overrides }; await this.persist();
   }
   async start(id, mode = 'dev') { await this.ready; this.mode(mode); return this.serial(id, () => { const next = this.launchQueue.catch(() => {}).then(() => this.startProcess(id, mode)); this.launchQueue = next; return next; }); }
