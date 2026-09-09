@@ -165,7 +165,8 @@ test('update dialog shows current version and the available release', { timeout:
     require('electron-updater').autoUpdater.emit('update-available', { version: '1.2.0' });
   });
   await expect(page.getByRole('button', { name: '업데이트 다운로드', exact: true })).toBeVisible();
-  await expect(page.locator('#update-summary')).toHaveText('새 버전 1.2.0');
+  await expect(page.locator('#update-summary')).toHaveText(`v${require('./package.json').version}`);
+  await expect(page.locator('#update-notice')).toContainText('새 업데이트 v1.2.0');
 });
 
 test('latest update state has only Close and a centered close icon', { timeout: 40000 }, async t => {
@@ -183,4 +184,66 @@ test('latest update state has only Close and a centered close icon', { timeout: 
   assert.ok(Math.abs(box.x + box.width/2 - icon.x - icon.width/2) < 1);
   assert.ok(Math.abs(box.y + box.height/2 - icon.y - icon.height/2) < 1);
   await page.screenshot({ path: 'artifacts/update-current-1.1.1.png' });
+});
+
+
+test('one click checks immediately and waits for completion before offering download', { timeout: 40000 }, async t => {
+  const { page, instance, errors } = await setup(t);
+  await instance.evaluate(({ ipcMain }) => {
+    const require = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    const updater = require('electron-updater').autoUpdater;
+    globalThis.updateChecks = 0;
+    ipcMain.removeHandler('checkUpdate');
+    ipcMain.handle('checkUpdate', async () => {
+      globalThis.updateChecks++;
+      updater.emit('checking-for-update');
+      await new Promise(resolve => { globalThis.finishUpdateCheck = resolve; });
+      updater.emit('update-available', { version: '1.2.0' });
+    });
+  });
+  const version = await page.locator('#update-summary').boundingBox();
+  const control = await page.locator('#updates').boundingBox();
+  assert.ok(version.y < control.y);
+  await page.locator('#updates').click();
+  await expect(page.locator('#modal-body')).toContainText('업데이트를 확인하고 있습니다.');
+  await expect(page.locator('#modal-actions button')).toHaveCount(1);
+  assert.equal(await instance.evaluate(() => globalThis.updateChecks), 1);
+  await page.keyboard.press('Escape');
+  await page.locator('#updates').click();
+  assert.equal(await instance.evaluate(() => globalThis.updateChecks), 1);
+  await instance.evaluate(() => globalThis.finishUpdateCheck());
+  await expect(page.getByRole('button', { name: '업데이트 다운로드', exact: true })).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#update-notice')).toBeVisible();
+  const notice = await page.locator('#update-notice').boundingBox();
+  assert.ok(notice.x < 40 && notice.y > (await page.evaluate(() => innerHeight)) / 2);
+  await page.screenshot({ path: 'artifacts/update-notice.png' });
+  await page.locator('#open-update').click();
+  await expect(page.getByRole('button', { name: '업데이트 다운로드', exact: true })).toBeEnabled();
+  assert.equal(await instance.evaluate(() => globalThis.updateChecks), 1);
+  assert.deepEqual(errors, []);
+});
+
+test('background updates show a notice and downloaded updates open the install action', { timeout: 40000 }, async t => {
+  const { page, instance } = await setup(t);
+  await expect(page.locator('#update-notice')).toBeHidden();
+  await instance.evaluate(() => {
+    const require = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    require('electron-updater').autoUpdater.emit('update-available', { version: '1.2.0' });
+  });
+  await expect(page.locator('#update-notice')).toContainText('새 업데이트 v1.2.0');
+  await expect(page.locator('#modal')).not.toBeVisible();
+  await instance.evaluate(() => {
+    const require = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    require('electron-updater').autoUpdater.emit('update-downloaded', { version: '1.2.0' });
+  });
+  await expect(page.locator('#update-notice')).toContainText('v1.2.0 설치 준비 완료');
+  await page.locator('#open-update').click();
+  await expect(page.getByRole('button', { name: '설치 후 재시작', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await instance.evaluate(() => {
+    const require = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
+    require('electron-updater').autoUpdater.emit('update-not-available');
+  });
+  await expect(page.locator('#update-notice')).toBeHidden();
 });
