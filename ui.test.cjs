@@ -117,6 +117,55 @@ test('environment settings edit the saved launch script', { timeout: 40000 }, as
   await expect.poll(async () => { try { return JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).api; } catch { return ''; } }).toBe('https://dev.example');
 });
 
+test('SSH settings persist per mode and explicitly apply local DB overrides', { timeout: 40000 }, async t => {
+  const { page, instance, project, errors } = await setup(t);
+  const pem = path.join(project, '테스트 키.pem');
+  await fs.writeFile(pem, 'fixture-key-content', { mode: 0o600 });
+  await instance.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, pem);
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await expect(page.locator('#tunnel-fields')).toBeHidden();
+  await page.getByLabel('SSH 터널 사용', { exact: true }).check();
+  await page.getByRole('button', { name: '키 파일 선택', exact: true }).click();
+  await expect(page.getByLabel('PEM 키 경로', { exact: true })).toHaveValue(pem);
+  await page.getByLabel('SSH 서버 주소', { exact: true }).fill('bastion.example.com');
+  await page.getByLabel('SSH 사용자', { exact: true }).fill('ubuntu');
+  await page.getByLabel('원격 DB 주소', { exact: true }).fill('db.internal');
+  await expect(page.getByLabel('SSH 포트', { exact: true })).toHaveValue('22');
+  await expect(page.getByLabel('원격 DB 포트', { exact: true })).toHaveValue('3306');
+  await page.getByLabel('로컬 포트', { exact: true }).fill('13317');
+  await expect(page.getByLabel('DB_HOST 개인 설정', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'DB 주소 적용', exact: true }).click();
+  await expect(page.getByLabel('DB_HOST 개인 설정', { exact: true })).toHaveValue('127.0.0.1');
+  await expect(page.getByLabel('DB_PORT 개인 설정', { exact: true })).toHaveValue('13317');
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await expect(page.locator('#modal')).not.toBeVisible();
+  const saved = await page.evaluate(() => window.launcher.env('test-app', 'dev'));
+  assert.deepEqual(saved.tunnel, { enabled: true, keyPath: pem, host: 'bastion.example.com', user: 'ubuntu', sshPort: 22, localPort: 13317, remoteHost: 'db.internal', remotePort: 3306 });
+  assert.equal(saved.overrides.DB_HOST, '127.0.0.1');
+  const configText = await fs.readFile(path.join(project, '../data/config.json'), 'utf8');
+  assert.ok(!configText.includes('fixture-key-content'));
+  await page.reload();
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await expect(page.getByLabel('SSH 터널 사용', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('로컬 포트', { exact: true })).toHaveValue('13317');
+  await page.locator('#modal-body').evaluate(node => { node.scrollTop = 0; });
+  await page.screenshot({ path: 'artifacts/ssh-tunnel-settings.png' });
+  await page.keyboard.press('Escape');
+  await page.getByLabel('user 실행 환경', { exact: true }).selectOption('prod');
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await expect(page.getByLabel('SSH 터널 사용', { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel('DB_HOST 개인 설정', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  assert.equal((await page.evaluate(() => window.launcher.env('test-app', 'dev'))).tunnel.enabled, true);
+  await page.getByLabel('user 실행 환경', { exact: true }).selectOption('dev');
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByLabel('SSH 터널 사용', { exact: true }).uncheck();
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  assert.equal((await page.evaluate(() => window.launcher.env('test-app', 'dev'))).tunnel?.enabled || false, false);
+  assert.equal(await fs.readFile(path.join(project, '.env'), 'utf8'), 'PRESERVE=original\n');
+  assert.deepEqual(errors, []);
+});
+
 test('global browser preference persists across reloads', { timeout: 40000 }, async t => {
   const { page } = await setup(t);
   await page.getByLabel('실행 후 브라우저 열기', { exact: false }).check();

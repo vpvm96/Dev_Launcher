@@ -37,6 +37,7 @@
       "main.cjs",
       "preload.cjs",
       "engine.cjs",
+      "ssh-tunnel.cjs",
       "updater.cjs",
       "index.html",
       "renderer.js",

@@ -173,3 +173,113 @@ test('stop clears retained failure logs after the process has exited', async t =
   await engine.stop(app.id);
   assert.equal(engine.logs(app.id), '');
 });
+
+async function tunnelFixture(t) {
+  const fixtureData = await fixture(t);
+  const { engine, root, project } = fixtureData;
+  const keyPath = path.join(root, 'key with spaces.pem');
+  await fs.writeFile(keyPath, 'fixture-private-key', { mode: 0o600 });
+  const sshPath = path.join(root, 'fake-ssh');
+  await fs.writeFile(sshPath, `#!${process.execPath}
+// 실제 네트워크 인증 없이 SSH 마스터의 준비와 종료를 재현합니다.
+const fs = require('node:fs'), net = require('node:net');
+const args = process.argv.slice(2), control = args[args.indexOf('-S') + 1];
+if (args.includes('-O')) {
+  const s = net.createConnection(control); s.on('connect', () => { s.destroy(); process.exit(0); }); s.on('error', () => process.exit(1));
+} else {
+  const key = args[args.indexOf('-i') + 1];
+  if (fs.readFileSync(key, 'utf8') === 'reject') { console.error('Permission denied (publickey).'); process.exit(255); }
+  const local = Number(args[args.indexOf('-L') + 1].split(':')[1]);
+  const server = net.createServer(s => s.end());
+  server.listen(local, '127.0.0.1', () => { if (fs.readFileSync(key, 'utf8') !== 'timeout') setTimeout(() => net.createServer(s => s.end()).listen(control), 120); });
+  server.on('error', () => process.exit(255));
+}
+`, { mode: 0o700 });
+  engine.tunnelOptions = { sshPath, timeout: 1500 };
+  const listener = net.createServer(); await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
+  const localPort = listener.address().port; await new Promise(resolve => listener.close(resolve));
+  const tunnel = { enabled: true, keyPath, host: 'example.test', user: 'ubuntu', sshPort: 22, localPort, remoteHost: '172.31.6.181', remotePort: 3306 };
+  await fs.writeFile(path.join(project, 'server.cjs'), "// 실행 환경과 PID를 기록합니다.\nrequire('fs').writeFileSync('observed.json', JSON.stringify({host:process.env.DB_HOST,port:process.env.DB_PORT,pid:process.pid}));setInterval(()=>{},1000);");
+  return { ...fixtureData, tunnel };
+}
+test('SSH settings persist per mode, validate atomically, and keep key contents out of config', async t => {
+  const { engine, app, tunnel, dataDir } = await tunnelFixture(t);
+  await engine.saveEnv(app.id, 'dev', { DB_HOST: '127.0.0.1', DB_PORT: String(tunnel.localPort) }, 'start:dev', tunnel);
+  const loaded = new Engine({ dataDir }); await loaded.ready;
+  assert.deepEqual((await loaded.env(app.id, 'dev')).tunnel, tunnel);
+  assert.equal((await loaded.env(app.id, 'prod')).tunnel, null);
+  assert.ok(!(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8')).includes('fixture-private-key'));
+  for (const patch of [{ host: '-oProxyCommand=bad' }, { remoteHost: 'host:22' }, { user: 'ubuntu;echo bad' }, { localPort: 0 }, { remotePort: 65536 }, { keyPath: 'relative.pem' }]) {
+    await assert.rejects(engine.saveEnv(app.id, 'dev', {}, 'start:prod', { ...tunnel, ...patch }));
+  }
+  assert.equal((await engine.env(app.id, 'dev')).script, 'start:dev');
+  assert.deepEqual((await engine.env(app.id, 'dev')).tunnel, tunnel);
+});
+test('SSH becomes ready before server launch and restart/stop clean up both processes', async t => {
+  const { engine, app, tunnel, project } = await tunnelFixture(t);
+  await engine.saveEnv(app.id, 'dev', { DB_HOST: '127.0.0.1', DB_PORT: String(tunnel.localPort) }, undefined, tunnel);
+  const starting = engine.start(app.id);
+  await delay(40); await assert.rejects(fs.access(path.join(project, 'observed.json')));
+  await starting; const first = await observed(project);
+  assert.equal(first.host, '127.0.0.1'); assert.equal(first.port, String(tunnel.localPort));
+  const oldTunnel = engine.runtime.get(app.id).tunnel, sshPid = oldTunnel.child.pid;
+  await fs.unlink(path.join(project, 'observed.json'));
+  await engine.restart(app.id); const second = await observed(project);
+  assert.notEqual(first.pid, second.pid);
+  assert.throws(() => process.kill(sshPid, 0), /ESRCH/);
+  await assert.rejects(fs.access(oldTunnel.directory));
+  const secondSsh = engine.runtime.get(app.id).tunnel.child.pid;
+  await engine.stop(app.id);
+  assert.throws(() => process.kill(second.pid, 0), /ESRCH/);
+  assert.throws(() => process.kill(secondSsh, 0), /ESRCH/);
+  assert.equal(await fs.readFile(path.join(project, '.env'), 'utf8'), 'KEEP=unchanged\n');
+});
+test('SSH authentication failure and occupied local port prevent server startup', async t => {
+  const { engine, app, tunnel, project } = await tunnelFixture(t);
+  await engine.saveEnv(app.id, 'dev', {}, undefined, tunnel);
+  await fs.writeFile(tunnel.keyPath, 'reject');
+  await assert.rejects(engine.start(app.id), /Permission denied/);
+  await assert.rejects(fs.access(path.join(project, 'observed.json')));
+  const listener = net.createServer(); await new Promise(resolve => listener.listen(tunnel.localPort, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => listener.close(resolve)));
+  await assert.rejects(engine.start(app.id), /포트가 사용 중/);
+  await assert.rejects(fs.access(path.join(project, 'observed.json')));
+});
+test('SSH disconnection stops backend and retains an actionable error', async t => {
+  const { engine, app, tunnel, project } = await tunnelFixture(t);
+  await engine.saveEnv(app.id, 'dev', {}, undefined, tunnel);
+  await engine.start(app.id); const backend = await observed(project);
+  engine.runtime.get(app.id).tunnel.child.kill('SIGKILL');
+  for (let i = 0; i < 100 && engine.runtime.get(app.id).status !== 'error'; i++) await delay(30);
+  assert.equal(engine.runtime.get(app.id).status, 'error');
+  assert.match(engine.runtime.get(app.id).error, /SSH 터널이 종료/);
+  assert.throws(() => process.kill(backend.pid, 0), /ESRCH/);
+});
+test('server exit and app shutdown close the associated SSH tunnel', async t => {
+  const { engine, app, tunnel, project } = await tunnelFixture(t);
+  await engine.saveEnv(app.id, 'dev', {}, undefined, tunnel);
+  await engine.start(app.id); const backend = await observed(project);
+  const sshPid = engine.runtime.get(app.id).tunnel.child.pid;
+  process.kill(backend.pid, 'SIGTERM');
+  for (let i = 0; i < 100 && !engine.runtime.get(app.id).tunnel.failure; i++) await delay(30);
+  assert.throws(() => process.kill(sshPid, 0), /ESRCH/);
+  await engine.start(app.id);
+  const nextSshPid = engine.runtime.get(app.id).tunnel.child.pid;
+  await engine.shutdown();
+  assert.throws(() => process.kill(nextSshPid, 0), /ESRCH/);
+});
+
+test('SSH timeout and invalid key permissions clean up without starting a backend', async t => {
+  const { engine, app, tunnel, project } = await tunnelFixture(t);
+  await engine.saveEnv(app.id, 'dev', {}, undefined, tunnel);
+  await fs.chmod(tunnel.keyPath, 0o644);
+  await assert.rejects(engine.start(app.id), /권한이 너무 넓습니다/);
+  await fs.chmod(tunnel.keyPath, 0o600);
+  await fs.writeFile(tunnel.keyPath, 'timeout');
+  engine.tunnelOptions.timeout = 300;
+  await assert.rejects(engine.start(app.id), /연결 시간이 초과/);
+  const connection = engine.runtime.get(app.id).tunnel;
+  assert.throws(() => process.kill(connection.child.pid, 0), /ESRCH/);
+  await assert.rejects(fs.access(connection.directory));
+  await assert.rejects(fs.access(path.join(project, 'observed.json')));
+});

@@ -6,6 +6,7 @@ const net = require('node:net');
 const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { parse } = require('dotenv');
+const { SshTunnel, validateTunnel } = require('./ssh-tunnel.cjs');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ENV_PATH = '(?:"([^"\\n]+)"|\'([^\'\\n]+)\'|([^\\s;&|]+))';
 function recipe(raw) {
@@ -20,8 +21,8 @@ function recipe(raw) {
   return { command, file, port: port ? Number(port) : /\b(next dev|react-scripts start)\b/.test(command) ? 3000 : /\bvite\b/.test(command) ? 5173 : undefined };
 }
 class Engine {
-  constructor({ dataDir = path.join(os.homedir(), 'Library/Application Support/Dev Launcher'), openBrowser } = {}) {
-    this.openBrowser = openBrowser; this.dataDir = dataDir; this.runtime = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
+  constructor({ dataDir = path.join(os.homedir(), 'Library/Application Support/Dev Launcher'), openBrowser, tunnelOptions } = {}) {
+    this.tunnelOptions = tunnelOptions; this.openBrowser = openBrowser; this.dataDir = dataDir; this.runtime = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
     this.ready = this.load();
   }
   async load() {
@@ -131,24 +132,26 @@ class Engine {
     await this.ready; this.mode(mode); const app = this.app(id); let base = {};
     if (app.envFiles[mode]) base = parse(await fs.readFile(path.resolve(app.path, app.envFiles[mode])));
     const pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
-    return { script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) } };
+    return { tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) } };
   }
-  async saveEnv(id, mode, overrides, script) {
+  async saveEnv(id, mode, overrides, script, tunnel) {
     await this.ready; this.app(id); this.mode(mode);
     if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) throw new Error('환경 설정 형식이 올바르지 않습니다.');
     for (const [key, value] of Object.entries(overrides)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string' || value.includes('\0')) throw new Error('환경변수 이름 또는 값이 올바르지 않습니다.');
+    const tunnelConfig = tunnel === undefined ? undefined : validateTunnel(tunnel);
     if (script !== undefined) {
       const app = this.app(id), pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
       if (typeof script !== 'string' || !Object.hasOwn(pkg.scripts || {}, script)) throw new Error('package.json에 있는 스크립트를 선택해 주세요.');
       app.scripts[mode] = script; app.ports ||= {}; app.ports[mode] = recipe(pkg.scripts[script]).port;
     }
+    if (tunnelConfig !== undefined) { this.app(id).tunnels ||= {}; this.app(id).tunnels[mode] = tunnelConfig; }
     this.config.overrides[id] ||= {}; this.config.overrides[id][mode] = { ...overrides }; await this.persist();
   }
   async start(id, mode = 'dev') { await this.ready; this.mode(mode); return this.serial(id, () => { const next = this.launchQueue.catch(() => {}).then(() => this.startProcess(id, mode)); this.launchQueue = next; return next; }); }
   async startProcess(id, mode) {
     if (this.closing) throw new Error('앱을 종료하고 있습니다.');
     const app = this.app(id), old = this.runtime.get(id);
-    if (old?.pid) { if (old.child && old.mode === mode) return; await this.stopProcess(id); }
+    if (old?.pid || old?.tunnel) { if (old.child && old.mode === mode) return; await this.stopProcess(id); }
     const r = { status: 'launching', mode, log: '', child: null }; this.runtime.set(id, r);
     try {
       const pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
@@ -173,6 +176,21 @@ class Engine {
         for (const [otherId, other] of this.runtime) if (otherId !== id && other.child && other.port === r.port) throw new Error(`${r.port} 포트를 다른 프로젝트가 사용 중입니다.`);
         await new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', () => reject(new Error(`${r.port} 포트가 사용 중입니다. 기존 서버를 종료해 주세요.`))); server.listen(r.port, () => server.close(resolve)); });
       }
+      if (values.tunnel?.enabled) {
+        r.tunnel = new SshTunnel(values.tunnel, { ...this.tunnelOptions, onFailure: error => {
+          r.error = error.message;
+          void this.serial(id, async () => {
+            if (this.runtime.get(id) !== r || r.stopping) return;
+            r.stopping = true;
+            if (r.pid) await this.terminateGroup(r.pid);
+            await r.tunnel.close();
+            r.child = null; r.pid = null; r.status = 'error'; r.error = error.message; r.stopping = false;
+          }).catch(error => { r.error = error.message; });
+        } });
+        r.log += 'SSH 터널 연결 중…\n';
+        await r.tunnel.open();
+        r.log += `SSH 터널 연결됨 · 127.0.0.1:${values.tunnel.localPort}\n`;
+      }
       const bins = []; for (let dir = app.path; ; dir = path.dirname(dir)) { bins.push(path.join(dir, 'node_modules/.bin')); if (dir === path.dirname(dir)) break; }
       merged.PATH = [...bins, path.dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(path.delimiter);
       merged.npm_lifecycle_event = script; merged.npm_lifecycle_script = raw; merged.npm_package_json = path.join(app.path, 'package.json'); merged.INIT_CWD = app.path;
@@ -184,12 +202,12 @@ class Engine {
       const append = text => { if (r.discardLogs) return; r.log = (r.log + text).slice(-100000); };
       child.stdout.on('data', data => append(data.toString())); child.stderr.on('data', data => append(data.toString()));
       child.once('error', error => { r.error = error.message; r.status = 'error'; r.child = null; append(error.message + '\n'); });
-      child.once('exit', (code, signal) => { if (r.child === child) { r.child = null; r.status = r.stopping ? 'stopped' : 'error'; if (!r.stopping) { r.error = `프로세스가 종료되었습니다 (${signal || code}).`; this.terminateGroup(child.pid).then(() => { if (r.pid === child.pid) r.pid = null; }).catch(error => { r.error = error.message; }); } } });
+      child.once('exit', (code, signal) => { if (r.child === child) { r.child = null; r.status = r.stopping ? 'stopped' : 'error'; if (!r.stopping) { r.error = `프로세스가 종료되었습니다 (${signal || code}).`; Promise.all([this.terminateGroup(child.pid), r.tunnel?.close()]).then(() => { if (r.pid === child.pid) r.pid = null; }).catch(error => { r.error = error.message; }); } } });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       r.status = 'running';
       void this.openWhenReady(id, r).catch(() => { if (r.discardLogs) return; r.log = (r.log + '\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n').slice(-100000); });
       append(`\n[${new Date().toLocaleTimeString()}] ${mode.toUpperCase()} 실행\n`);
-    } catch (error) { r.status = 'error'; r.error = error.message; throw error; }
+    } catch (error) { await r.tunnel?.close(); r.status = 'error'; r.error = error.message; throw error; }
   }
   async stop(id) { await this.ready; this.app(id); return this.serial(id, () => this.stopProcess(id)); }
   async terminateGroup(pid) {
@@ -199,7 +217,7 @@ class Engine {
     kill('SIGKILL');
   }
   async stopProcess(id) {
-    const r = this.runtime.get(id); if (!r?.pid) { if (r) { r.status = 'stopped'; r.error = undefined; r.discardLogs = true; r.log = ''; r.redactions = []; } return; }
+    const r = this.runtime.get(id); if (r?.tunnel) await r.tunnel.close(); if (!r?.pid) { if (r) { r.status = 'stopped'; r.error = undefined; r.discardLogs = true; r.log = ''; r.redactions = []; } return; }
     r.stopping = true;
     r.discardLogs = true; r.log = ''; r.redactions = [];
     await this.terminateGroup(r.pid);

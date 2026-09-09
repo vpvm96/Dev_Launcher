@@ -93,6 +93,27 @@ async function editEnv(app) {
   for (const key of [...new Set([data.script, ...data.availableScripts])]) { const option = el('option', '', key || '스크립트 선택'); option.value = key; scriptSelect.append(option); }
   scriptSelect.value = data.script; scriptField.append(scriptSelect);
   $('modal-body').append(scriptField, el('p', 'help', 'package.json의 스크립트를 선택하세요. 저장한 명령은 다음 실행 또는 재시작부터 적용됩니다.'));
+  const tunnelSection = el('section', 'tunnel-settings'); const tunnelLabel = el('label', 'check-label'); const tunnelEnabled = el('input'); tunnelEnabled.type = 'checkbox'; tunnelEnabled.checked = data.tunnel?.enabled === true;
+  tunnelLabel.append(tunnelEnabled, document.createTextNode('SSH 터널 사용')); tunnelSection.append(tunnelLabel, el('p', 'help', '프로젝트 실행 전에 터널을 연결하고, 프로젝트 종료 시 함께 닫습니다. 현재 실행 환경에만 저장됩니다.'));
+  const tunnelFields = el('div'); tunnelFields.id = 'tunnel-fields'; tunnelFields.hidden = !tunnelEnabled.checked; tunnelEnabled.setAttribute('aria-controls', tunnelFields.id);
+  tunnelEnabled.addEventListener('change', () => { tunnelFields.hidden = !tunnelEnabled.checked; });
+  const keyPath = field('PEM 키 경로', data.tunnel?.keyPath || '', '/경로/development.pem');
+  const keyRow = el('div', 'tunnel-key-row'); keyRow.append(keyPath.wrapper, button('키 파일 선택', () => attempt(async () => { const selected = await api.choosePem(); if (selected) keyPath.input.value = selected; })));
+  tunnelFields.append(keyRow, el('p', 'help', '키 파일은 복사하지 않고 이 Mac의 경로만 저장합니다.'));
+  const tunnelInputs = { keyPath: keyPath.input };
+  const tunnelGrid = el('div', 'field-grid');
+  for (const [name, label, fallback, placeholder] of [['host', 'SSH 서버 주소', '', 'bastion.example.com'], ['user', 'SSH 사용자', '', 'ubuntu'], ['sshPort', 'SSH 포트', 22, ''], ['localPort', '로컬 포트', 13316, ''], ['remoteHost', '원격 DB 주소', '', 'db.internal'], ['remotePort', '원격 DB 포트', 3306, '']]) {
+    const item = field(label, data.tunnel?.[name] ?? fallback, placeholder);
+    if (name.endsWith('Port')) { item.input.type = 'number'; item.input.min = '1'; item.input.max = '65535'; item.input.step = '1'; }
+    tunnelInputs[name] = item.input; tunnelGrid.append(item.wrapper);
+  }
+  tunnelFields.append(tunnelGrid, button('DB 주소 적용', () => {
+    if (!tunnelInputs.localPort.reportValidity() || !tunnelInputs.localPort.value) { toast('로컬 포트는 1~65535 사이의 정수로 입력해 주세요.', true); return; }
+    overrides.DB_HOST = '127.0.0.1'; overrides.DB_PORT = tunnelInputs.localPort.value;
+    for (const key of ['DB_HOST', 'DB_PORT']) if (!keys.includes(key)) keys.push(key);
+    filter.value = ''; drawRows(); toast('DB_HOST와 DB_PORT에 로컬 접속 주소를 입력했어요. 설정을 저장해 주세요.');
+  }), el('p', 'help', 'DB 주소 적용을 누르면 DB_HOST=127.0.0.1, DB_PORT=로컬 포트를 개인 환경변수로 설정합니다. 원본 환경 파일은 수정하지 않습니다.'));
+  tunnelSection.append(tunnelFields); $('modal-body').append(tunnelSection);
   $('modal-body').append(el('p', 'help', '기본 환경 파일 위에 개인 설정을 적용합니다. 체크를 끄면 기본값을 사용하고, 체크한 채 비워두면 빈 문자열을 적용합니다.'));
   const tools = el('div', 'env-tools'); const filter = el('input'); filter.type = 'search'; filter.placeholder = '환경변수 검색'; filter.setAttribute('aria-label', '환경변수 검색'); const revealLabel = el('label', 'check-label'); const reveal = el('input'); reveal.type = 'checkbox'; revealLabel.append(reveal, document.createTextNode('값 표시')); tools.append(filter, revealLabel); const rows = el('div'); $('modal-body').append(tools, rows);
   function drawRows() {
@@ -107,7 +128,11 @@ async function editEnv(app) {
   }
   filter.addEventListener('input', drawRows); reveal.addEventListener('change', drawRows); drawRows();
   const newKeyRow = el('div', 'new-key-row'); const newKey = el('input'); newKey.placeholder = '새 환경변수 이름'; newKey.setAttribute('aria-label', '새 환경변수 이름'); newKeyRow.append(newKey, button('＋ 변수 추가', () => { const key = newKey.value.trim(); if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { toast('영문, 숫자, 밑줄로 변수 이름을 입력해 주세요.', true); return; } if (keys.includes(key)) { toast('이미 등록된 변수입니다.', true); return; } keys.push(key); overrides[key] = ''; newKey.value = ''; filter.value = ''; drawRows(); })); $('modal-body').append(newKeyRow);
-  const save = async (restart) => { await api.saveEnv(app.id, selectedMode, overrides, scriptSelect.value || undefined); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true); };
+  const save = async (restart) => {
+    if (tunnelEnabled.checked) for (const input of Object.values(tunnelInputs)) { input.required = true; if (!input.reportValidity()) return; }
+    const tunnel = { enabled: tunnelEnabled.checked, ...Object.fromEntries(Object.entries(tunnelInputs).map(([key, input]) => [key, key.endsWith('Port') ? Number(input.value) : input.value.trim()])) };
+    await api.saveEnv(app.id, selectedMode, overrides, scriptSelect.value || undefined, tunnel); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true);
+  };
   submitButton('설정 저장', () => save(false)); if (active(app)) submitButton(app.mode && app.mode !== selectedMode ? `저장 후 ${selectedMode.toUpperCase()}로 재시작` : '저장 후 재시작', () => save(true));
 }
 $('rename-group').addEventListener('click', () => { const group = currentGroup(); if (group) renameItem(group, true); });
