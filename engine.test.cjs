@@ -333,3 +333,96 @@ test('SSH timeout and invalid key permissions clean up without starting a backen
   await assert.rejects(fs.access(connection.directory));
   await assert.rejects(fs.access(path.join(project, 'observed.json')));
 });
+
+async function javaFixture(t, files) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-launcher-java-test-'));
+  const project = path.join(root, 'Java project'); await fs.mkdir(project);
+  for (const [name, contents] of Object.entries(files)) await fs.writeFile(path.join(project, name), contents);
+  const dataDir = path.join(root, 'data');
+  const engine = new Engine({ dataDir });
+  t.after(async () => { await engine.shutdown(); await fs.rm(root, { recursive: true, force: true }); });
+  return { engine, project, dataDir };
+}
+
+for (const [file, source, type, script] of [
+  ['build.gradle', "plugins { id 'org.springframework.boot' version '3.5.0' }", 'gradle', 'bootRun'],
+  ['build.gradle.kts', 'plugins { id("org.springframework.boot") version "3.5.0" }', 'gradle', 'bootRun'],
+  ['build.gradle', "apply plugin: 'org.springframework.boot'", 'gradle', 'bootRun'],
+  ['pom.xml', '<project><build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>', 'maven', 'spring-boot:run']
+]) {
+  test(`Java discovery recognizes ${file} with ${source.startsWith('apply') ? 'legacy plugin' : 'Spring Boot plugin'}`, async t => {
+    const { engine, project } = await javaFixture(t, { [file]: source });
+    const found = await engine.discover(project);
+    assert.equal(found.type, type);
+    assert.deepEqual(found.availableScripts, [script]);
+    assert.deepEqual(found.scripts, { dev: script, prod: script });
+  });
+}
+
+test('Java discovery ignores commented plugins and unapplied Gradle plugins', async t => {
+  const { engine, project } = await javaFixture(t, {});
+  for (const source of [
+    "plugins { id 'java' } // id 'org.springframework.boot' version '3.5.0'",
+    '/* plugins { id("org.springframework.boot") version "3.5.0" } */',
+    "plugins { id 'org.springframework.boot' version '3.5.0' apply false }",
+    'plugins { id("org.springframework.boot") version "3.5.0" apply false }'
+  ]) {
+    await fs.writeFile(path.join(project, 'build.gradle'), source);
+    await assert.rejects(engine.discover(project), /Spring Boot|Tomcat/);
+  }
+  await fs.unlink(path.join(project, 'build.gradle'));
+  for (const source of [
+    '<project><!-- <artifactId>spring-boot-maven-plugin</artifactId> --></project>',
+    '<project><build><pluginManagement><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></pluginManagement></build></project>',
+    '<project><profiles><profile><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></profile></profiles></project>'
+  ]) {
+    await fs.writeFile(path.join(project, 'pom.xml'), source);
+    await assert.rejects(engine.discover(project), /Spring Boot|Tomcat/);
+  }
+});
+
+test('unsupported folders explain supported build files instead of leaking ENOENT', async t => {
+  const { engine, project } = await javaFixture(t, {});
+  await assert.rejects(engine.discover(project), error => {
+    assert.match(error.message, /package\.json/);
+    assert.match(error.message, /Gradle|build\.gradle/);
+    assert.match(error.message, /Maven|pom\.xml/);
+    assert.match(error.message, /[가-힣]/);
+    assert.doesNotMatch(error.message, /ENOENT/);
+    return true;
+  });
+});
+
+for (const [file, source, wrapper, script, args] of [
+  ['build.gradle', "plugins { id 'org.springframework.boot' version '3.5.0' }", 'gradlew', 'bootRun', ['bootRun', '--no-daemon']],
+  ['pom.xml', '<project><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>', 'mvnw', 'spring-boot:run', ['spring-boot:run']]
+]) {
+  test(`Java ${wrapper} supports environment edits, reload, start and stop without package.json`, async t => {
+    const { engine, project, dataDir } = await javaFixture(t, {
+      [file]: source,
+      [wrapper]: '#!/bin/sh\nexec node server.cjs "$@"\n',
+      '.env': 'API_URL=https://java.example\n',
+      'server.cjs': "// Java 래퍼가 받은 인자와 환경을 기록합니다.\nrequire('fs').writeFileSync('observed.json',JSON.stringify({args:process.argv.slice(2),url:process.env.API_URL,pid:process.pid}));setInterval(()=>{},1000);"
+    });
+    await fs.chmod(path.join(project, wrapper), 0o644);
+    const group = await engine.addGroup('Java');
+    const app = await engine.addApp(group.id, { path: project });
+    assert.deepEqual((await engine.env(app.id, 'dev')).availableScripts, [script]);
+    await assert.rejects(engine.saveEnv(app.id, 'dev', {}, 'unknown-task'), /스크립트|명령/);
+    await engine.saveEnv(app.id, 'dev', { API_URL: 'https://override.example' }, script);
+    const loaded = new Engine({ dataDir });
+    try {
+      const saved = await loaded.env(app.id, 'dev');
+      assert.equal(saved.script, script);
+      assert.equal(saved.overrides.API_URL, 'https://override.example');
+      await loaded.start(app.id, 'dev');
+      const child = await observed(project);
+      assert.deepEqual(child.args, args);
+      assert.equal(child.url, 'https://override.example');
+      await loaded.stop(app.id);
+      assert.throws(() => process.kill(child.pid, 0), /ESRCH/);
+      assert.equal((await loaded.list()).groups[0].apps[0].status, 'stopped');
+      assert.equal(await fs.readFile(path.join(project, '.env'), 'utf8'), 'API_URL=https://java.example\n');
+    } finally { await loaded.shutdown(); }
+  });
+}

@@ -12,11 +12,21 @@
 4. 선택 실행 또는 개별 실행·종료·재시작을 사용합니다.
 5. 환경 설정에서 실행 스크립트와 개인 환경값을 수정합니다. 실행 중이면 저장 후 재시작할 수 있습니다.
 
-프로젝트 코드와 환경 파일, 해당 프로젝트에 필요한 Node.js·패키지 매니저·설치된 의존성을 별도로 준비해야 합니다. DEV·PROD는 로컬 실행에 사용할 환경 설정이며, 운영 서버 배포 기능이 아닙니다.
+프로젝트 코드와 환경 파일, 해당 프로젝트에 필요한 Node.js 또는 JDK·빌드 도구·설치된 의존성을 별도로 준비해야 합니다. DEV·PROD는 로컬 실행에 사용할 환경 설정이며, 운영 서버 배포 기능이 아닙니다.
 
 `실행 후 브라우저 열기`는 모든 그룹에 적용되고 기본으로 켜져 있습니다. 서버 포트가 열리면 브라우저를 한 번 엽니다. 최대 2분 동안 기다린 뒤 로그에 안내합니다. Vite·CRA의 자체 자동 열기는 런처에서 제어합니다.
 
 프로젝트 종료 시 로그가 초기화됩니다. 앱 창을 닫거나 앱 재시작을 누르면 런처에서 실행한 서버도 종료됩니다. 기존 터미널에서 실행한 서버는 관리하지 않습니다.
+
+## Java·타임리프 프로젝트
+
+`package.json`이 없으면 `build.gradle`, `build.gradle.kts`, `pom.xml`에서 Spring Boot 실행 플러그인을 찾습니다. Gradle은 `bootRun`, Maven은 `spring-boot:run`을 DEV·PROD 실행 스크립트로 자동 설정합니다. 프로젝트의 `gradlew`·`mvnw`를 우선 사용하고, 없으면 시스템의 `gradle`·`mvn`을 사용합니다. Gradle 실행에는 `--no-daemon`을 적용합니다. JDK와 필요한 빌드 도구는 별도로 준비해야 합니다.
+
+DEV·PROD가 Spring 프로필을 자동으로 바꾸지는 않습니다. 환경 설정에서 필요에 따라 `SPRING_PROFILES_ACTIVE`를 지정하세요. `.properties`·YAML 설정은 Spring이 직접 읽으며 런처의 환경 파일 입력란에는 `.env` 형식만 지정합니다. Java 서버의 브라우저 열기와 포트 충돌 검사는 환경 설정에 `SERVER_PORT`를 지정한 경우 동작합니다.
+
+`target`·`build` 대신 실행할 모듈의 빌드 설정이 있는 폴더를 선택하세요. 정적 파일에 직접 선언된 실행 플러그인을 감지하며, 부모 프로젝트에서 상속하거나 별도 스크립트·버전 카탈로그로 적용하는 플러그인, 비활성 플러그인 선언 및 별도 Tomcat 배포는 자동 감지 대상이 아닙니다. Node 설정과 Java 설정이 함께 있으면 `package.json`을 우선합니다.
+
+실행 명령 참고 문서. [Spring Boot Gradle](https://docs.spring.io/spring-boot/gradle-plugin/running.html), [Spring Boot Maven](https://docs.spring.io/spring-boot/maven-plugin/run.html).
 
 ## 개인 설정
 

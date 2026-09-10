@@ -9,6 +9,39 @@ const { parse } = require('dotenv');
 const { SshTunnel, validateTunnel } = require('./ssh-tunnel.cjs');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ENV_PATH = '(?:"([^"\\n]+)"|\'([^\'\\n]+)\'|([^\\s;&|]+))';
+async function readOptional(directory, file) {
+  try { return await fs.readFile(path.join(directory, file), 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+async function projectCommands(directory) {
+  const packageFile = await readOptional(directory, 'package.json');
+  if (packageFile !== null) return { type: 'node', scripts: JSON.parse(packageFile).scripts || {} };
+  let java = false;
+  for (const file of ['build.gradle', 'build.gradle.kts']) {
+    const source = await readOptional(directory, file);
+    if (source === null) continue;
+    java = true;
+    const text = source.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, match => match.startsWith('/') ? match.replace(/[^\n]/g, ' ') : match);
+    const plugin = /\bid\s*(?:\(\s*)?['"]org\.springframework\.boot['"]\s*\)?([^\n;}]*)(?:\n\s*(apply\s+false))?/g;
+    const applied = [...text.matchAll(plugin)].some(match => !/apply\s+false/.test(match[1] + (match[2] || '')))
+      || /\bapply\s*(?:plugin\s*:\s*|\(\s*plugin\s*=\s*)['"]org\.springframework\.boot['"]/.test(text);
+    if (applied) {
+      const wrapper = await readOptional(directory, 'gradlew');
+      return { type: 'gradle', scripts: { bootRun: `${wrapper === null ? 'gradle' : 'sh ./gradlew'} bootRun --no-daemon` } };
+    }
+  }
+  const pom = await readOptional(directory, 'pom.xml');
+  if (pom !== null) {
+    java = true;
+    const text = pom.replace(/<!--[\s\S]*?-->/g, '').replace(/<pluginManagement\b[^>]*>[\s\S]*?<\/pluginManagement>/g, '').replace(/<profiles\b[^>]*>[\s\S]*?<\/profiles>/g, '');
+    if ([...text.matchAll(/<plugin\b[^>]*>([\s\S]*?)<\/plugin>/g)].some(match => /<artifactId>\s*spring-boot-maven-plugin\s*<\/artifactId>/.test(match[1]))) {
+      const wrapper = await readOptional(directory, 'mvnw');
+      return { type: 'maven', scripts: { 'spring-boot:run': `${wrapper === null ? 'mvn' : 'sh ./mvnw'} spring-boot:run` } };
+    }
+  }
+  if (java) throw new Error('Spring Boot 실행 플러그인을 찾지 못했습니다. 실행할 모듈의 폴더를 선택해 주세요. 별도 Tomcat에 배포하는 Java·타임리프 프로젝트는 자동 실행을 지원하지 않습니다.');
+  throw new Error('package.json 또는 Spring Boot의 Gradle·Maven 설정 파일을 찾지 못했습니다. target/build 폴더 대신 package.json, build.gradle, build.gradle.kts 또는 pom.xml이 있는 프로젝트 폴더를 선택해 주세요.');
+}
 function recipe(raw) {
   let command = raw || '', file;
   const cp = command.match(new RegExp('^\\s*cp\\s+' + ENV_PATH + '\\s+(?:\\./)?\\.env\\s*&&\\s*'));
@@ -37,7 +70,7 @@ class Engine {
     let changed = false;
     for (const app of this.config.groups.flatMap(g => g.apps)) {
       let pkg;
-      try { pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8')); }
+      try { pkg = await projectCommands(app.path); }
       catch { continue; }
       for (const mode of ['dev', 'prod']) {
         const command = pkg.scripts?.[app.scripts[mode]];
@@ -71,17 +104,18 @@ class Engine {
   }
   async discover(directory) {
     const absolute = await fs.realpath(directory);
-    const pkg = JSON.parse(await fs.readFile(path.join(absolute, 'package.json'), 'utf8'));
+    const pkg = await projectCommands(absolute);
     const all = pkg.scripts || {};
     const choose = keys => keys.find(k => all[k]) || '';
     const scripts = { dev: choose(['dev', 'start:dev', 'start']), prod: choose(['start:prod', 'start:prd', 'prd', 'prod']) };
+    if (pkg.type !== 'node') scripts.dev = scripts.prod = Object.keys(all)[0];
     const envFiles = {}, ports = {};
     for (const mode of ['dev', 'prod']) {
       const r = recipe(all[scripts[mode]]); ports[mode] = r.port;
       envFiles[mode] = r.file || '';
       if (!envFiles[mode]) for (const file of mode === 'dev' ? ['env/.env.dev', '.env.dev', '.env.development', '.env'] : ['env/.env.prod', '.env.prod', '.env.prd', '.env.production']) { try { await fs.access(path.join(absolute, file)); envFiles[mode] = file; break; } catch {} }
     }
-    return { name: path.basename(absolute), path: absolute, scripts, envFiles, ports, port: ports.dev, availableScripts: Object.keys(all) };
+    return { name: path.basename(absolute), path: absolute, type: pkg.type, scripts, envFiles, ports, port: ports.dev, availableScripts: Object.keys(all) };
   }
   async setAutoOpen(enabled) {
     await this.ready;
@@ -131,7 +165,7 @@ class Engine {
   async env(id, mode) {
     await this.ready; this.mode(mode); const app = this.app(id); let base = {};
     if (app.envFiles[mode]) base = parse(await fs.readFile(path.resolve(app.path, app.envFiles[mode])));
-    const pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
+    const pkg = await projectCommands(app.path);
     return { tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) }, drafts: { ...this.config.overrideDrafts?.[id]?.[mode], ...this.config.overrides[id]?.[mode] } };
   }
   async saveEnv(id, mode, overrides, script, tunnel, drafts) {
@@ -142,8 +176,8 @@ class Engine {
     }
     const tunnelConfig = tunnel === undefined ? undefined : validateTunnel(tunnel);
     if (script !== undefined) {
-      const app = this.app(id), pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
-      if (typeof script !== 'string' || !Object.hasOwn(pkg.scripts || {}, script)) throw new Error('package.json에 있는 스크립트를 선택해 주세요.');
+      const app = this.app(id), pkg = await projectCommands(app.path);
+      if (typeof script !== 'string' || !Object.hasOwn(pkg.scripts || {}, script)) throw new Error('프로젝트에서 감지한 실행 스크립트를 선택해 주세요.');
       app.scripts[mode] = script; app.ports ||= {}; app.ports[mode] = recipe(pkg.scripts[script]).port;
     }
     if (tunnelConfig !== undefined) { this.app(id).tunnels ||= {}; this.app(id).tunnels[mode] = tunnelConfig; }
@@ -158,7 +192,7 @@ class Engine {
     if (old?.pid || old?.tunnel) { if (old.child && old.mode === mode) return; await this.stopProcess(id); }
     const r = { status: 'launching', mode, log: '', child: null }; this.runtime.set(id, r);
     try {
-      const pkg = JSON.parse(await fs.readFile(path.join(app.path, 'package.json'), 'utf8'));
+      const pkg = await projectCommands(app.path);
       const script = app.scripts[mode]; if (!script || !pkg.scripts?.[script]) throw new Error(`${mode.toUpperCase()} 실행 명령을 설정해 주세요.`);
       let raw = pkg.scripts[script];
       const visited = new Set([script]);
@@ -175,7 +209,7 @@ class Engine {
       const values = await this.env(id, mode);
       const merged = { ...process.env, ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides };
       const explicitPort = parsed.command.match(/(?:(?:^|\s)(?:--port|-p)(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
-      r.port = Number(explicitPort) || Number(merged.PORT) || parsed.port || undefined;
+      r.port = pkg.type === 'node' ? Number(explicitPort) || Number(merged.PORT) || parsed.port || undefined : Number(merged.SERVER_PORT) || undefined;
       if (r.port) {
         for (const [otherId, other] of this.runtime) if (otherId !== id && other.child && other.port === r.port) throw new Error(`${r.port} 포트를 다른 프로젝트가 사용 중입니다.`);
         await new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', () => reject(new Error(`${r.port} 포트가 사용 중입니다. 기존 서버를 종료해 주세요.`))); server.listen(r.port, () => server.close(resolve)); });
@@ -197,8 +231,10 @@ class Engine {
       }
       const bins = []; for (let dir = app.path; ; dir = path.dirname(dir)) { bins.push(path.join(dir, 'node_modules/.bin')); if (dir === path.dirname(dir)) break; }
       merged.PATH = [...bins, path.dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(path.delimiter);
-      merged.npm_lifecycle_event = script; merged.npm_lifecycle_script = raw; merged.npm_package_json = path.join(app.path, 'package.json'); merged.INIT_CWD = app.path;
-      if (process.versions.electron) merged.ELECTRON_RUN_AS_NODE = '1';
+      if (pkg.type === 'node') {
+        merged.npm_lifecycle_event = script; merged.npm_lifecycle_script = raw; merged.npm_package_json = path.join(app.path, 'package.json'); merged.INIT_CWD = app.path;
+        if (process.versions.electron) merged.ELECTRON_RUN_AS_NODE = '1';
+      }
       if (this.openBrowser) merged.BROWSER = 'none';
       const child = spawn('/bin/sh', ['-c', parsed.command], { cwd: app.path, env: merged, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       r.child = child; r.pid = child.pid;
