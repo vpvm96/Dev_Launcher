@@ -16,11 +16,9 @@ async function readOptional(directory, file) {
 async function projectCommands(directory) {
   const packageFile = await readOptional(directory, 'package.json');
   if (packageFile !== null) return { type: 'node', scripts: JSON.parse(packageFile).scripts || {} };
-  let java = false;
   for (const file of ['build.gradle', 'build.gradle.kts']) {
     const source = await readOptional(directory, file);
     if (source === null) continue;
-    java = true;
     const text = source.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, match => match.startsWith('/') ? match.replace(/[^\n]/g, ' ') : match);
     const plugin = /\bid\s*(?:\(\s*)?['"]org\.springframework\.boot['"]\s*\)?([^\n;}]*)(?:\n\s*(apply\s+false))?/g;
     const applied = [...text.matchAll(plugin)].some(match => !/apply\s+false/.test(match[1] + (match[2] || '')))
@@ -32,15 +30,17 @@ async function projectCommands(directory) {
   }
   const pom = await readOptional(directory, 'pom.xml');
   if (pom !== null) {
-    java = true;
     const text = pom.replace(/<!--[\s\S]*?-->/g, '').replace(/<pluginManagement\b[^>]*>[\s\S]*?<\/pluginManagement>/g, '').replace(/<profiles\b[^>]*>[\s\S]*?<\/profiles>/g, '');
     if ([...text.matchAll(/<plugin\b[^>]*>([\s\S]*?)<\/plugin>/g)].some(match => /<artifactId>\s*spring-boot-maven-plugin\s*<\/artifactId>/.test(match[1]))) {
       const wrapper = await readOptional(directory, 'mvnw');
       return { type: 'maven', scripts: { 'spring-boot:run': `${wrapper === null ? 'mvn' : 'sh ./mvnw'} spring-boot:run` } };
     }
   }
-  if (java) throw new Error('Spring Boot 실행 플러그인을 찾지 못했습니다. 실행할 모듈의 폴더를 선택해 주세요. 별도 Tomcat에 배포하는 Java·타임리프 프로젝트는 자동 실행을 지원하지 않습니다.');
-  throw new Error('package.json 또는 Spring Boot의 Gradle·Maven 설정 파일을 찾지 못했습니다. target/build 폴더 대신 package.json, build.gradle, build.gradle.kts 또는 pom.xml이 있는 프로젝트 폴더를 선택해 주세요.');
+  return { type: 'shell', scripts: {} };
+}
+function validateScript(script, pkg, manual) {
+  if (typeof script !== 'string' || !script.trim() || script.includes('\0')) throw new Error('실행 명령을 입력해 주세요.');
+  if (!manual && !Object.hasOwn(pkg.scripts, script)) throw new Error('프로젝트에서 감지한 실행 스크립트를 선택해 주세요.');
 }
 function recipe(raw) {
   let command = raw || '', file;
@@ -73,7 +73,7 @@ class Engine {
       try { pkg = await projectCommands(app.path); }
       catch { continue; }
       for (const mode of ['dev', 'prod']) {
-        const command = pkg.scripts?.[app.scripts[mode]];
+        const command = app.manualScripts?.[mode] ? app.scripts[mode] : pkg.scripts?.[app.scripts[mode]];
         if (!command) continue;
         const port = recipe(command).port;
         if (port === undefined) continue;
@@ -108,7 +108,7 @@ class Engine {
     const all = pkg.scripts || {};
     const choose = keys => keys.find(k => all[k]) || '';
     const scripts = { dev: choose(['dev', 'start:dev', 'start']), prod: choose(['start:prod', 'start:prd', 'prd', 'prod']) };
-    if (pkg.type !== 'node') scripts.dev = scripts.prod = Object.keys(all)[0];
+    if (pkg.type !== 'node') scripts.dev = scripts.prod = Object.keys(all)[0] || '';
     const envFiles = {}, ports = {};
     for (const mode of ['dev', 'prod']) {
       const r = recipe(all[scripts[mode]]); ports[mode] = r.port;
@@ -147,6 +147,13 @@ class Engine {
     const found = await this.discover(config.path);
     if (this.config.groups.some(g => g.apps.some(a => a.path === found.path))) throw new Error('이미 등록된 프로젝트 폴더입니다.');
     const app = { ...found, name: config.name || found.name, scripts: config.scripts || found.scripts, envFiles: config.envFiles || found.envFiles, id: randomUUID() };
+    app.manualScripts = { dev: config.manualScripts?.dev === true, prod: config.manualScripts?.prod === true };
+    const pkg = await projectCommands(app.path);
+    for (const mode of ['dev', 'prod']) {
+      if (app.scripts[mode] || mode === 'dev') validateScript(app.scripts[mode], pkg, app.manualScripts[mode]);
+      app.ports[mode] = recipe(app.manualScripts[mode] ? app.scripts[mode] : pkg.scripts[app.scripts[mode]]).port;
+    }
+    app.port = app.ports.dev;
     group.apps.push(app); await this.persist(); return app;
   }
   async renameApp(id, name) {
@@ -166,9 +173,9 @@ class Engine {
     await this.ready; this.mode(mode); const app = this.app(id); let base = {};
     if (app.envFiles[mode]) base = parse(await fs.readFile(path.resolve(app.path, app.envFiles[mode])));
     const pkg = await projectCommands(app.path);
-    return { tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) }, drafts: { ...this.config.overrideDrafts?.[id]?.[mode], ...this.config.overrides[id]?.[mode] } };
+    return { manualScript: app.manualScripts?.[mode] === true, tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) }, drafts: { ...this.config.overrideDrafts?.[id]?.[mode], ...this.config.overrides[id]?.[mode] } };
   }
-  async saveEnv(id, mode, overrides, script, tunnel, drafts) {
+  async saveEnv(id, mode, overrides, script, tunnel, drafts, manualScript) {
     await this.ready; this.app(id); this.mode(mode);
     for (const values of drafts === undefined ? [overrides] : [overrides, drafts]) {
       if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('환경 설정 형식이 올바르지 않습니다.');
@@ -177,8 +184,11 @@ class Engine {
     const tunnelConfig = tunnel === undefined ? undefined : validateTunnel(tunnel);
     if (script !== undefined) {
       const app = this.app(id), pkg = await projectCommands(app.path);
-      if (typeof script !== 'string' || !Object.hasOwn(pkg.scripts || {}, script)) throw new Error('프로젝트에서 감지한 실행 스크립트를 선택해 주세요.');
-      app.scripts[mode] = script; app.ports ||= {}; app.ports[mode] = recipe(pkg.scripts[script]).port;
+      const manual = manualScript === undefined ? app.manualScripts?.[mode] === true : manualScript === true;
+      validateScript(script, pkg, manual);
+      app.scripts[mode] = script.trim(); app.manualScripts ||= {}; app.manualScripts[mode] = manual;
+      app.ports ||= {}; app.ports[mode] = recipe(manual ? script : pkg.scripts[script]).port;
+      if (mode === 'dev') app.port = app.ports.dev;
     }
     if (tunnelConfig !== undefined) { this.app(id).tunnels ||= {}; this.app(id).tunnels[mode] = tunnelConfig; }
     this.config.overrideDrafts ||= {}; this.config.overrideDrafts[id] ||= {};
@@ -193,23 +203,24 @@ class Engine {
     const r = { status: 'launching', mode, log: '', child: null }; this.runtime.set(id, r);
     try {
       const pkg = await projectCommands(app.path);
-      const script = app.scripts[mode]; if (!script || !pkg.scripts?.[script]) throw new Error(`${mode.toUpperCase()} 실행 명령을 설정해 주세요.`);
-      let raw = pkg.scripts[script];
+      const manual = app.manualScripts?.[mode] === true;
+      const script = app.scripts[mode]; if (!script || (!manual && !Object.hasOwn(pkg.scripts, script))) throw new Error(`${mode.toUpperCase()} 실행 명령을 설정해 주세요.`);
+      let raw = manual ? script : pkg.scripts[script];
       const visited = new Set([script]);
-      for (;;) {
+      for (; !manual;) {
         const alias = raw.match(/^\s*(?:npm run|yarn(?: run)?|pnpm(?: run)?)\s+([\w:.-]+)\s*$/)?.[1];
         if (!alias) break;
         if (visited.has(alias) || !pkg.scripts[alias]) throw new Error('실행 명령의 참조가 올바르지 않습니다.');
         visited.add(alias); raw = pkg.scripts[alias];
       }
-      if (/\b(?:npm\s+(?:run|start)|yarn|pnpm)\b/.test(raw)) throw new Error('복합 패키지 명령은 지원하지 않습니다. 실제 서버 실행 스크립트를 선택해 주세요.');
-      const parsed = recipe(raw);
+      if (!manual && /\b(?:npm\s+(?:run|start)|yarn|pnpm)\b/.test(raw)) throw new Error('복합 패키지 명령은 지원하지 않습니다. 실제 서버 실행 스크립트를 선택해 주세요.');
+      const parsed = manual ? { command: raw, port: recipe(raw).port } : recipe(raw);
       // 등록한 스크립트의 환경 로더만 분리하여 프로젝트의 .env 파일을 건드리지 않습니다.
-      if (/(?:^|[;&|]\s*)\s*cp\s+[^\n]+\.env\b/.test(parsed.command) || /\b(?:env-cmd|dotenv)\b/.test(parsed.command)) throw new Error('자동 분리할 수 없는 환경 로더입니다. 환경 복사 없는 실행 명령을 선택해 주세요.');
+      if (!manual && (/(?:^|[;&|]\s*)\s*cp\s+[^\n]+\.env\b/.test(parsed.command) || /\b(?:env-cmd|dotenv)\b/.test(parsed.command))) throw new Error('자동 분리할 수 없는 환경 로더입니다. 환경 복사 없는 실행 명령을 선택해 주세요.');
       const values = await this.env(id, mode);
       const merged = { ...process.env, ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides };
       const explicitPort = parsed.command.match(/(?:(?:^|\s)(?:--port|-p)(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
-      r.port = pkg.type === 'node' ? Number(explicitPort) || Number(merged.PORT) || parsed.port || undefined : Number(merged.SERVER_PORT) || undefined;
+      r.port = manual || pkg.type === 'node' || pkg.type === 'shell' ? Number(explicitPort) || Number(merged.PORT) || Number(merged.SERVER_PORT) || parsed.port || undefined : Number(merged.SERVER_PORT) || undefined;
       if (r.port) {
         for (const [otherId, other] of this.runtime) if (otherId !== id && other.child && other.port === r.port) throw new Error(`${r.port} 포트를 다른 프로젝트가 사용 중입니다.`);
         await new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', () => reject(new Error(`${r.port} 포트가 사용 중입니다. 기존 서버를 종료해 주세요.`))); server.listen(r.port, () => server.close(resolve)); });
@@ -242,7 +253,7 @@ class Engine {
       const append = text => { if (r.discardLogs) return; r.log = (r.log + text).slice(-100000); };
       child.stdout.on('data', data => append(data.toString())); child.stderr.on('data', data => append(data.toString()));
       child.once('error', error => { r.error = error.message; r.status = 'error'; r.child = null; append(error.message + '\n'); });
-      child.once('exit', (code, signal) => { if (r.child === child) { r.child = null; r.status = r.stopping ? 'stopped' : 'error'; if (!r.stopping) { r.error = `프로세스가 종료되었습니다 (${signal || code}).`; Promise.all([this.terminateGroup(child.pid), r.tunnel?.close()]).then(() => { if (r.pid === child.pid) r.pid = null; }).catch(error => { r.error = error.message; }); } } });
+      child.once('exit', (code, signal) => { if (r.child === child) { r.child = null; r.status = r.stopping || (manual && code === 0) ? 'stopped' : 'error'; if (!r.stopping) { if (r.status === 'error') r.error = `프로세스가 종료되었습니다 (${signal || code}).`; Promise.all([this.terminateGroup(child.pid), r.tunnel?.close()]).then(() => { if (r.pid === child.pid) r.pid = null; }).catch(error => { r.error = error.message; }); } } });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       r.status = 'running';
       void this.openWhenReady(id, r).catch(() => { if (r.discardLogs) return; r.log = (r.log + '\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n').slice(-100000); });

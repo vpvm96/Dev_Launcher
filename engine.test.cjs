@@ -368,7 +368,7 @@ test('Java discovery ignores commented plugins and unapplied Gradle plugins', as
     'plugins { id("org.springframework.boot") version "3.5.0" apply false }'
   ]) {
     await fs.writeFile(path.join(project, 'build.gradle'), source);
-    await assert.rejects(engine.discover(project), /Spring Boot|Tomcat/);
+    assert.deepEqual((await engine.discover(project)).availableScripts, []);
   }
   await fs.unlink(path.join(project, 'build.gradle'));
   for (const source of [
@@ -377,20 +377,47 @@ test('Java discovery ignores commented plugins and unapplied Gradle plugins', as
     '<project><profiles><profile><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></profile></profiles></project>'
   ]) {
     await fs.writeFile(path.join(project, 'pom.xml'), source);
-    await assert.rejects(engine.discover(project), /Spring Boot|Tomcat/);
+    assert.deepEqual((await engine.discover(project)).availableScripts, []);
   }
 });
 
-test('unsupported folders explain supported build files instead of leaking ENOENT', async t => {
-  const { engine, project } = await javaFixture(t, {});
-  await assert.rejects(engine.discover(project), error => {
-    assert.match(error.message, /package\.json/);
-    assert.match(error.message, /Gradle|build\.gradle/);
-    assert.match(error.message, /Maven|pom\.xml/);
-    assert.match(error.message, /[가-힣]/);
-    assert.doesNotMatch(error.message, /ENOENT/);
-    return true;
+test('plain folders can register and run a quoted shell file with isolated environments', async t => {
+  const { engine, project, dataDir } = await javaFixture(t, {
+    'start script.sh': '# 테스트 환경과 인자를 기록합니다.\npwd > directory.txt\nprintf "%s|%s" "$MESSAGE" "$1" > result.txt\necho shell-complete\n',
+    '.env.dev': 'MESSAGE=development\n', '.env.prod': 'MESSAGE=production\n'
   });
+  assert.equal((await engine.discover(project)).type, 'shell');
+  const group = await engine.addGroup('Shell');
+  const app = await engine.addApp(group.id, { path: project, scripts: { dev: 'sh "./start script.sh" "hello world"', prod: 'sh "./start script.sh" prod' }, manualScripts: { dev: true, prod: true } });
+  await engine.saveEnv(app.id, 'dev', { MESSAGE: 'personal' });
+  const loaded = new Engine({ dataDir }); t.after(() => loaded.shutdown());
+  assert.equal((await loaded.env(app.id, 'dev')).manualScript, true);
+  for (const [mode, result] of [['dev', 'personal|hello world'], ['prod', 'production|prod']]) {
+    await loaded.start(app.id, mode);
+    for (let i = 0; i < 100 && loaded.runtime.get(app.id).child; i++) await delay(20);
+    assert.equal(await fs.readFile(path.join(project, 'result.txt'), 'utf8'), result);
+    assert.equal((await fs.readFile(path.join(project, 'directory.txt'), 'utf8')).trim(), await fs.realpath(project));
+    assert.equal(loaded.runtime.get(app.id).status, 'stopped');
+    assert.match(await loaded.logs(app.id), /shell-complete/);
+  }
+});
+
+test('manual settings persist, stop child processes, reject blanks and switch back to detected scripts', async t => {
+  const { engine, app, project, dataDir } = await fixture(t);
+  await fs.writeFile(path.join(project, 'start.sh'), '# 테스트 서버를 실행합니다.\nexec node server.cjs\n');
+  for (const value of ['', '  ', 'bad\0command']) await assert.rejects(engine.saveEnv(app.id, 'dev', {}, value, undefined, undefined, true), /명령/);
+  await engine.saveEnv(app.id, 'dev', {}, 'sh ./start.sh', undefined, undefined, true);
+  assert.equal((await new Engine({ dataDir }).env(app.id, 'dev')).script, 'sh ./start.sh');
+  assert.equal((await engine.env(app.id, 'prod')).manualScript, false);
+  await engine.start(app.id); const child = await observed(project);
+  await engine.stop(app.id); assert.throws(() => process.kill(child.pid, 0), /ESRCH/);
+  await engine.saveEnv(app.id, 'dev', {}, 'exit 7', undefined, undefined, true);
+  await engine.start(app.id);
+  for (let i = 0; i < 100 && engine.runtime.get(app.id).child; i++) await delay(20);
+  assert.equal(engine.runtime.get(app.id).status, 'error');
+  await engine.saveEnv(app.id, 'dev', {}, 'start:dev', undefined, undefined, false);
+  assert.equal((await engine.env(app.id, 'dev')).manualScript, false);
+  await engine.start(app.id); assert.equal(engine.runtime.get(app.id).status, 'running');
 });
 
 for (const [file, source, wrapper, script, args] of [

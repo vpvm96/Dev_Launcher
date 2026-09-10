@@ -62,13 +62,20 @@ function closeModal() { $('modal').close(); state.logs = null; }
 function field(label, value = '', placeholder = '') { const wrapper = el('label', 'field', label); const input = el('input'); input.value = value; input.placeholder = placeholder; wrapper.append(input); return { wrapper, input }; }
 function submitButton(label, handler) { const node = button(label, async () => { node.disabled = true; try { await handler(); } catch (error) { toast(error.message || String(error), true); } finally { node.disabled = false; } }, 'primary'); $('modal-actions').append(node); return node; }
 function addGroup() { modal('새 프로젝트 그룹'); const name = field('그룹 이름', '', '예. Powderroom'); $('modal-body').append(name.wrapper); const save = submitButton('그룹 만들기', async () => { if (!name.input.value.trim()) { name.input.focus(); return; } const result = await api.addGroup(name.input.value.trim()); state.group = result?.id || null; closeModal(); await refresh(true); }); name.input.addEventListener('keydown', (event) => { if (event.key === 'Enter') save.click(); }); name.input.focus(); }
-function scriptField(label, selected, available) {
-  const wrapper = el('label', 'field', label); const input = el('select');
+function scriptField(label, selected, available = [], manual = false) {
+  const wrapper = el('div', 'script-field'); const selectLabel = el('label', 'field', label); const input = el('select');
   input.setAttribute('aria-label', label);
-  for (const key of ['', ...available]) { const option = el('option', '', key || '스크립트 선택'); option.value = key; input.append(option); }
-  input.value = selected; wrapper.append(input); return { wrapper, input };
+  for (const key of [...new Set(['', ...available, ...(!manual && selected ? [selected] : [])])]) { const option = el('option', '', key || '스크립트 선택'); option.value = key; input.append(option); }
+  const custom = el('option', '', '직접 입력'); custom.value = '__manual__'; input.append(custom);
+  const command = field(`${label} 직접 입력`, manual ? selected : '', 'sh ./start.sh');
+  command.input.spellcheck = false;
+  input.value = manual || !available.length ? '__manual__' : selected;
+  const update = () => { command.wrapper.hidden = input.value !== '__manual__'; };
+  input.addEventListener('change', () => { update(); if (!command.wrapper.hidden) command.input.focus(); });
+  update(); selectLabel.append(input); wrapper.append(selectLabel, command.wrapper);
+  return { wrapper, get value() { return (input.value === '__manual__' ? command.input.value : input.value).trim(); }, get manual() { return input.value === '__manual__'; } };
 }
-async function addApp() { await attempt(async () => { const groupId = state.group; const config = await api.chooseProject(); if (!config) return; modal('프로젝트 연결', 'PROJECT SETUP'); const name = field('프로젝트 이름', config.name || ''); const path = el('p', 'help', config.path); const dev = scriptField('DEV 실행 스크립트', config.scripts?.dev || '', config.availableScripts); const prod = scriptField('PROD 실행 스크립트', config.scripts?.prod || '', config.availableScripts); const devEnv = field('DEV 환경 파일', config.envFiles?.dev || '', '.env.development'); const prodEnv = field('PROD 환경 파일', config.envFiles?.prod || '', '.env.production'); const commands = el('div', 'field-grid'); commands.append(dev.wrapper, prod.wrapper); const envs = el('div', 'field-grid'); envs.append(devEnv.wrapper, prodEnv.wrapper); $('modal-body').append(path, name.wrapper, commands, envs, el('p', 'help', '프로젝트에서 감지한 실행 스크립트를 선택하세요. 환경 파일은 .env 형식의 프로젝트 기준 상대 경로를 입력하세요.')); submitButton('프로젝트 연결', async () => { if (!name.input.value.trim() || !dev.input.value.trim()) throw new Error('프로젝트 이름과 DEV 실행 명령을 입력해 주세요.'); await api.addApp(groupId, { ...config, name: name.input.value.trim(), scripts: { dev: dev.input.value.trim(), prod: prod.input.value.trim() }, envFiles: { dev: devEnv.input.value.trim(), prod: prodEnv.input.value.trim() } }); closeModal(); await refresh(true); }); }); }
+async function addApp() { await attempt(async () => { const groupId = state.group; const config = await api.chooseProject(); if (!config) return; modal('프로젝트 연결', 'PROJECT SETUP'); const name = field('프로젝트 이름', config.name || ''); const path = el('p', 'help', config.path); const dev = scriptField('DEV 실행 스크립트', config.scripts?.dev || '', config.availableScripts); const prod = scriptField('PROD 실행 스크립트', config.scripts?.prod || '', config.availableScripts); const devEnv = field('DEV 환경 파일', config.envFiles?.dev || '', '.env.development'); const prodEnv = field('PROD 환경 파일', config.envFiles?.prod || '', '.env.production'); const commands = el('div', 'field-grid'); commands.append(dev.wrapper, prod.wrapper); const envs = el('div', 'field-grid'); envs.append(devEnv.wrapper, prodEnv.wrapper); $('modal-body').append(path, name.wrapper, commands, envs, el('p', 'help', '감지된 스크립트를 선택하거나 직접 입력하세요. 명령은 선택한 프로젝트 폴더에서 실행됩니다. 환경 파일은 .env 형식의 프로젝트 기준 상대 경로를 입력하세요.')); submitButton('프로젝트 연결', async () => { if (!name.input.value.trim() || !dev.value) throw new Error('프로젝트 이름과 DEV 실행 명령을 입력해 주세요.'); await api.addApp(groupId, { ...config, name: name.input.value.trim(), scripts: { dev: dev.value, prod: prod.value }, manualScripts: { dev: dev.manual, prod: prod.manual }, envFiles: { dev: devEnv.input.value.trim(), prod: prodEnv.input.value.trim() } }); closeModal(); await refresh(true); }); }); }
 function renameItem(item, isGroup) {
   modal(isGroup ? '그룹 이름 변경' : '프로젝트 이름 변경');
   const name = field(isGroup ? '그룹 이름' : '프로젝트 이름', item.name);
@@ -88,11 +95,8 @@ async function editEnv(app) {
   const selectedMode = mode(app); modal(`${app.name} 환경 설정`, `${selectedMode.toUpperCase()} / LOCAL OVERRIDES`); $('modal-body').append(el('p', 'help', '환경 설정 불러오는 중…'));
   const revision = state.modalRevision; const data = await api.env(app.id, selectedMode); if (!$('modal').open || state.modalRevision !== revision) return;
   $('modal-body').replaceChildren(); const overrides = Object.assign(Object.create(null), data.overrides); const drafts = Object.assign(Object.create(null), data.drafts, data.overrides); const bases = new Map(data.base.map(({ key, value }) => [key, value])); const keys = [...new Set([...bases.keys(), ...Object.keys(drafts), ...Object.keys(overrides)])];
-  const scriptField = el('label', 'field', `${selectedMode.toUpperCase()} 실행 스크립트`);
-  const scriptSelect = el('select'); scriptSelect.setAttribute('aria-label', `${selectedMode.toUpperCase()} 실행 스크립트`);
-  for (const key of [...new Set([data.script, ...data.availableScripts])]) { const option = el('option', '', key || '스크립트 선택'); option.value = key; scriptSelect.append(option); }
-  scriptSelect.value = data.script; scriptField.append(scriptSelect);
-  $('modal-body').append(scriptField, el('p', 'help', '프로젝트에서 감지한 스크립트를 선택하세요. 저장한 명령은 다음 실행 또는 재시작부터 적용됩니다.'));
+  const script = scriptField(`${selectedMode.toUpperCase()} 실행 스크립트`, data.script, data.availableScripts, data.manualScript);
+  $('modal-body').append(script.wrapper, el('p', 'help', '감지된 스크립트를 선택하거나 sh ./start.sh처럼 직접 입력하세요. 명령은 프로젝트 폴더에서 실행되며 다음 실행 또는 재시작부터 적용됩니다.'));
   const tunnelSection = el('section', 'tunnel-settings'); const tunnelLabel = el('label', 'check-label'); const tunnelEnabled = el('input'); tunnelEnabled.type = 'checkbox'; tunnelEnabled.checked = data.tunnel?.enabled === true;
   tunnelLabel.append(tunnelEnabled, document.createTextNode('SSH 터널 사용')); tunnelSection.append(tunnelLabel, el('p', 'help', '프로젝트 실행 전에 터널을 연결하고, 프로젝트 종료 시 함께 닫습니다. 현재 실행 환경에만 저장됩니다.'));
   const tunnelFields = el('div'); tunnelFields.id = 'tunnel-fields'; tunnelFields.hidden = !tunnelEnabled.checked; tunnelEnabled.setAttribute('aria-controls', tunnelFields.id);
@@ -131,7 +135,7 @@ async function editEnv(app) {
   const save = async (restart) => {
     if (tunnelEnabled.checked) for (const input of Object.values(tunnelInputs)) { input.required = true; if (!input.reportValidity()) return; }
     const tunnel = { enabled: tunnelEnabled.checked, ...Object.fromEntries(Object.entries(tunnelInputs).map(([key, input]) => [key, key.endsWith('Port') ? Number(input.value) : input.value.trim()])) };
-    await api.saveEnv(app.id, selectedMode, overrides, scriptSelect.value || undefined, tunnel, drafts); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true);
+    await api.saveEnv(app.id, selectedMode, overrides, script.value || (script.manual ? '' : undefined), tunnel, drafts, script.manual); if (restart) await api.restart(app.id, selectedMode); closeModal(); toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.'); await refresh(true);
   };
   submitButton('설정 저장', () => save(false)); if (active(app)) submitButton(app.mode && app.mode !== selectedMode ? `저장 후 ${selectedMode.toUpperCase()}로 재시작` : '저장 후 재시작', () => save(true));
 }

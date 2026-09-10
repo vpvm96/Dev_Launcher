@@ -349,3 +349,36 @@ test('log dialog opens at the latest line and preserves manual scrolling on upda
   await expect.poll(bottomGap).toBeLessThan(2);
   assert.deepEqual(errors, []);
 });
+
+test('manual shell commands can be registered, edited and run from the UI', { timeout: 40000 }, async t => {
+  const { page, instance, project, errors } = await setup(t);
+  const added = path.join(project, '../shell project'); await fs.mkdir(added);
+  await fs.writeFile(path.join(added, 'start script.sh'), '# 테스트 결과를 출력합니다.\nprintf "%s" "$1" > result.txt\necho shell-finished\n');
+  await instance.evaluate(({ dialog }, directory) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] }); }, added);
+  await page.locator('#add-app').click();
+  await expect(page.getByLabel('DEV 실행 스크립트', { exact: true })).toHaveValue('__manual__');
+  await page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true }).fill('sh "./start script.sh" first');
+  await page.getByRole('button', { name: '프로젝트 연결', exact: true }).click();
+  await expect(page.locator('#app-count')).toHaveText('2');
+  const config = JSON.parse(await fs.readFile(path.join(project, '../data/config.json'), 'utf8'));
+  const addedApp = config.groups[0].apps[1];
+  assert.equal(addedApp.manualScripts.dev, true);
+  await page.getByRole('button', { name: '환경 설정', exact: true }).nth(1).click();
+  await expect(page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true })).toHaveValue('sh "./start script.sh" first');
+  await page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true }).fill('sh "./start script.sh" "hello world"');
+  await page.screenshot({ path: 'artifacts/manual-script-settings.png' });
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await page.getByRole('button', { name: '실행', exact: true }).nth(1).click();
+  await expect.poll(async () => { try { return await fs.readFile(path.join(added, 'result.txt'), 'utf8'); } catch { return ''; } }).toBe('hello world');
+  await page.getByRole('button', { name: '환경 설정', exact: true }).first().click();
+  await page.getByLabel('DEV 실행 스크립트', { exact: true }).selectOption('__manual__');
+  await page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true }).fill('sh ./start.sh');
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await page.getByRole('button', { name: '환경 설정', exact: true }).first().click();
+  await expect(page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true })).toHaveValue('sh ./start.sh');
+  await page.getByLabel('DEV 실행 스크립트', { exact: true }).selectOption('start:dev');
+  await expect(page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true })).toBeHidden();
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  assert.equal((await page.evaluate(() => window.launcher.env('test-app', 'dev'))).manualScript, false);
+  assert.deepEqual(errors, []);
+});

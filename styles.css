@@ -67,3 +67,5 @@ select:disabled { opacity: .4; cursor: default; }
 .icon-button{height:38px;display:grid;place-items:center;flex-shrink:0;line-height:1}.icon-button svg{display:block;width:16px;height:16px}
 
 .tunnel-settings{border:1px solid var(--line);border-radius:10px;padding:16px;margin:0 0 22px}.tunnel-settings>.check-label{font-weight:650;color:var(--text);min-height:28px}.tunnel-settings .help{margin:8px 0 14px}.tunnel-settings .help:last-child{margin-bottom:0}.tunnel-key-row{display:flex;align-items:flex-end;gap:10px;margin:14px 0 0}.tunnel-key-row .field{flex:1;min-width:0;margin-bottom:0}.tunnel-key-row button{flex-shrink:0}.tunnel-settings .field-grid{margin-top:16px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+
+.script-field .field[hidden]{display:none}
