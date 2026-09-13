@@ -1,5 +1,5 @@
 // 업데이트 확인과 다운로드 상태를 관리하고 서버 종료 후 앱을 교체합니다.
-function createUpdater({ autoUpdater, isPackaged, version, beforeInstall }) {
+function createUpdater({ autoUpdater, isPackaged, version, beforeInstall, onChange }) {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   let state = { phase: 'idle', version, currentVersion: version, progress: 0, message: '' };
@@ -8,7 +8,7 @@ function createUpdater({ autoUpdater, isPackaged, version, beforeInstall }) {
   let available = false;
   let downloaded = false;
   const status = () => ({ ...state });
-  const set = patch => { state = { ...state, ...patch }; };
+  const set = patch => { state = { ...state, ...patch }; try { onChange?.(); } catch { /* 화면 알림 실패는 업데이트 상태에 영향을 주지 않습니다. */ } };
   const failure = error => set({ phase: 'error', message: String(error?.message || '업데이트에 실패했습니다.').slice(0, 500) });
   const cancelled = () => set({ phase: available ? 'available' : 'idle', progress: 0, message: '다운로드가 취소되었습니다. 다시 시도할 수 있습니다.' });
   autoUpdater.on('checking-for-update', () => set({ phase: 'checking', message: '업데이트를 확인하고 있습니다.' }));

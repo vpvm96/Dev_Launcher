@@ -382,3 +382,62 @@ test('manual shell commands can be registered, edited and run from the UI', { ti
   assert.equal((await page.evaluate(() => window.launcher.env('test-app', 'dev'))).manualScript, false);
   assert.deepEqual(errors, []);
 });
+
+test('groups can be deleted and reordered, and cards expose open-in tools', { timeout: 40000 }, async t => {
+  const { page, errors } = await setup(t);
+  await expect(page.getByRole('button', { name: 'user Finder에서 열기', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'user VS Code에서 열기', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '그룹 위로 이동', exact: true })).toBeDisabled();
+  await page.locator('#add-group').click();
+  await page.getByLabel('그룹 이름', { exact: true }).fill('Second');
+  await page.getByRole('button', { name: '그룹 만들기' }).click();
+  await expect(page.locator('#group-title')).toHaveText('Second');
+  await page.getByRole('button', { name: '그룹 위로 이동', exact: true }).click();
+  await expect(page.locator('#groups button').first()).toContainText('Second');
+  await page.getByRole('button', { name: '그룹 삭제', exact: true }).click();
+  await expect(page.locator('#modal-body')).toContainText('Second 그룹과 등록된 프로젝트 0개');
+  await page.locator('#modal-actions').getByRole('button', { name: '그룹 삭제', exact: true }).click();
+  await expect(page.locator('#group-title')).toHaveText('Test Workspace');
+  await expect(page.locator('#groups button')).toHaveCount(1);
+  assert.deepEqual(errors, []);
+});
+
+test('log dialog renders terminal colors, filters lines and clears output', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  const esc = String.fromCharCode(27);
+  await fs.writeFile(path.join(project, 'server.cjs'), `// 색상 코드가 포함된 로그를 출력하는 테스트 서버입니다.\nconsole.log('${esc}[32mready${esc}[0m server');console.log('plain warning');setInterval(()=>{},1000);`);
+  await page.locator('#start-selected').click();
+  await expect.poll(() => page.evaluate(() => window.launcher.logs('test-app'))).toContain('plain warning');
+  await page.getByRole('button', { name: '로그', exact: true }).click();
+  await expect(page.locator('#log-output .ansi-fg-32')).toHaveText('ready');
+  await expect(page.locator('#log-output')).not.toContainText(esc);
+  await page.getByLabel('로그 검색').fill('warning');
+  await expect(page.locator('#log-output')).toHaveText('plain warning');
+  await page.getByLabel('로그 검색').fill('');
+  await page.getByRole('button', { name: '지우기', exact: true }).click();
+  await expect(page.locator('#log-output')).toHaveText('아직 출력된 로그가 없습니다.');
+  assert.equal(await page.evaluate(() => window.launcher.logs('test-app')), '');
+  assert.deepEqual(errors, []);
+});
+
+test('settings add custom modes and save project options shown as badges', { timeout: 40000 }, async t => {
+  const { page, errors } = await setup(t);
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByLabel('새 환경 이름').fill('staging');
+  await page.getByRole('button', { name: '＋ 환경 추가', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'STAGING 환경 삭제', exact: true })).toBeVisible();
+  await page.getByLabel('비정상 종료 시 자동 재시작', { exact: true }).check();
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await expect(page.locator('#modal')).not.toBeVisible();
+  await expect(page.locator('.badge')).toHaveText(['자동 재시작']);
+  await expect(page.getByLabel('user 실행 환경', { exact: true }).locator('option')).toHaveText(['DEV', 'PROD', 'STAGING']);
+  await page.getByLabel('user 실행 환경', { exact: true }).selectOption('staging');
+  await expect(page.locator('#group-mode')).toHaveValue('staging');
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await expect(page.locator('#modal-eyebrow')).toContainText('STAGING');
+  await page.getByRole('button', { name: 'STAGING 환경 삭제', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'STAGING 환경 삭제', exact: true })).toBeHidden();
+  await page.locator('#close-modal').click();
+  await expect(page.getByLabel('user 실행 환경', { exact: true })).toHaveValue('dev');
+  assert.deepEqual(errors, []);
+});

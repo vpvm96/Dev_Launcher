@@ -453,3 +453,150 @@ for (const [file, source, wrapper, script, args] of [
     } finally { await loaded.shutdown(); }
   });
 }
+
+const { springPort, resolveNodeBin } = require('./engine.cjs');
+
+test('groups can be removed, reordered and share a project path across groups but not within one', async t => {
+  const { engine, app, project, dataDir } = await fixture(t);
+  const second = await engine.addGroup('Second');
+  await assert.rejects(engine.addApp(engine.config.groups[0].id, { path: project }), /이 그룹에 이미/);
+  const shared = await engine.addApp(second.id, { path: project });
+  assert.notEqual(shared.id, app.id);
+  await engine.moveGroup(second.id, -1);
+  assert.deepEqual(engine.config.groups.map(g => g.name), ['Second', 'Test']);
+  await engine.moveGroup(second.id, -1);
+  assert.deepEqual(engine.config.groups.map(g => g.name), ['Second', 'Test']);
+  await assert.rejects(engine.moveGroup(second.id, 2), /방향/);
+  await engine.saveEnv(shared.id, 'dev', { API_URL: 'x' });
+  await engine.start(shared.id, 'dev'); const values = await observed(project);
+  await engine.removeGroup(second.id);
+  assert.throws(() => process.kill(values.pid, 0), /ESRCH/);
+  const stored = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'));
+  assert.deepEqual(stored.groups.map(g => g.name), ['Test']);
+  assert.equal(stored.overrides[shared.id], undefined);
+  await assert.rejects(engine.removeGroup(second.id), /그룹을 찾을 수 없습니다/);
+});
+
+test('projects reorder within their group and persist the order', async t => {
+  const { engine, app, root, dataDir } = await fixture(t);
+  const other = path.join(root, 'other'); await fs.mkdir(other);
+  await fs.writeFile(path.join(other, 'package.json'), JSON.stringify({ scripts: { dev: 'node -e "setInterval(()=>{},1000)"' } }));
+  const added = await engine.addApp(engine.config.groups[0].id, { path: other });
+  await engine.moveApp(added.id, -1);
+  assert.deepEqual(engine.config.groups[0].apps.map(a => a.id), [added.id, app.id]);
+  await engine.moveApp(added.id, -1);
+  assert.deepEqual(engine.config.groups[0].apps.map(a => a.id), [added.id, app.id]);
+  const loaded = new Engine({ dataDir });
+  assert.deepEqual((await loaded.list()).groups[0].apps.map(a => a.id), [added.id, app.id]);
+});
+
+test('custom modes keep separate scripts and overrides and cannot drop dev', async t => {
+  const { engine, app, project, dataDir } = await fixture(t);
+  await assert.rejects(engine.addMode(app.id, 'Staging'), /환경 이름/);
+  await assert.rejects(engine.addMode(app.id, 'prod'), /이미 있는/);
+  assert.deepEqual(await engine.addMode(app.id, 'staging'), ['dev', 'prod', 'staging']);
+  await assert.rejects(engine.start(app.id, 'staging'), /STAGING 실행 명령을 설정해 주세요/);
+  await engine.saveEnv(app.id, 'staging', { API_URL: 'http://staging.local' }, 'start:prod');
+  await engine.setEnvFile(app.id, 'staging', 'env/.env.prod');
+  await engine.start(app.id, 'staging');
+  const values = await observed(project);
+  assert.equal(values.url, 'http://staging.local');
+  assert.equal((await engine.list()).groups[0].apps[0].mode, 'staging');
+  await assert.rejects(engine.removeMode(app.id, 'staging'), /실행 중인 환경/);
+  await engine.stop(app.id);
+  await assert.rejects(engine.removeMode(app.id, 'dev'), /DEV 환경은 삭제할 수 없습니다/);
+  assert.deepEqual(await engine.removeMode(app.id, 'staging'), ['dev', 'prod']);
+  await assert.rejects(engine.env(app.id, 'staging'), /사용 가능한 환경: DEV, PROD/);
+  const stored = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'));
+  assert.equal(stored.overrides[app.id].staging, undefined);
+  assert.equal(stored.groups[0].apps[0].scripts.staging, undefined);
+});
+
+test('Spring Boot port comes from application settings with placeholder defaults', async t => {
+  const { engine, project } = await javaFixture(t, { 'build.gradle': "plugins { id 'org.springframework.boot' version '3.5.0' }" });
+  assert.equal(await springPort(project), 8080);
+  await fs.mkdir(path.join(project, 'src/main/resources'), { recursive: true });
+  await fs.writeFile(path.join(project, 'src/main/resources/application.yml'), 'spring:\n  application:\n    name: demo\nserver:\n  servlet:\n    context-path: /\n  port: ${SERVER_PORT:9090}\n');
+  assert.equal(await springPort(project), 9090);
+  assert.equal((await engine.discover(project)).ports.dev, 9090);
+  await fs.writeFile(path.join(project, 'src/main/resources/application.properties'), 'spring.application.name=demo\nserver.port = 7070\n');
+  assert.equal(await springPort(project), 7070);
+});
+
+test('node version files resolve to installed nvm or fnm binaries', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dev-launcher-node-test-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const project = path.join(root, 'project'); await fs.mkdir(project);
+  const nvm = path.join(root, 'nvm/versions/node'), fnm = path.join(root, 'fnm/node-versions');
+  for (const dir of [path.join(nvm, 'v20.11.1/bin'), path.join(nvm, 'v20.9.0/bin'), path.join(fnm, 'v22.3.0/installation/bin')]) {
+    await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, 'node'), '');
+  }
+  assert.equal(await resolveNodeBin(project, [nvm, fnm]), null);
+  await fs.writeFile(path.join(project, '.nvmrc'), 'v20\n');
+  assert.deepEqual(await resolveNodeBin(project, [nvm, fnm]), { file: '.nvmrc', version: '20', bin: path.join(nvm, 'v20.11.1/bin') });
+  await fs.writeFile(path.join(project, '.nvmrc'), '22.3.0');
+  assert.equal((await resolveNodeBin(project, [nvm, fnm])).bin, path.join(fnm, 'v22.3.0/installation/bin'));
+  await fs.writeFile(path.join(project, '.nvmrc'), '18');
+  assert.deepEqual(await resolveNodeBin(project, [nvm, fnm]), { file: '.nvmrc', version: '18', bin: null });
+  await fs.writeFile(path.join(project, '.nvmrc'), 'lts/*');
+  assert.equal((await resolveNodeBin(project, [nvm, fnm])).bin, null);
+});
+
+test('waitReady resolves after the port opens and rejects for stopped projects', async t => {
+  const { engine, app, project } = await fixture(t, 'node server.cjs');
+  await assert.rejects(engine.waitReady(app.id, 500), /앞 프로젝트가 실행되지 않아/);
+  await engine.start(app.id, 'dev'); await observed(project);
+  assert.equal(await engine.waitReady(app.id), true);
+  await engine.stop(app.id);
+  await assert.rejects(engine.waitReady(app.id, 500), /앞 프로젝트가 실행되지 않아/);
+});
+
+test('crash notifies and auto restart relaunches until the process stays up', async t => {
+  const notices = [], changes = [];
+  const { engine, app, project } = await fixture(t, 'node crash.cjs', { notify: n => notices.push(n), onChange: () => changes.push(Date.now()) });
+  await fs.writeFile(path.join(project, 'crash.cjs'), `const fs = require('fs'); if (!fs.existsSync('marker')) { fs.writeFileSync('marker', ''); process.exit(3); } fs.writeFileSync('observed.json', JSON.stringify({ pid: process.pid })); setInterval(() => {}, 1000);`);
+  await engine.start(app.id, 'dev');
+  for (let i = 0; i < 100 && engine.runtime.get(app.id).status !== 'error'; i++) await delay(30);
+  assert.match(notices[0].title, /종료됨/); assert.doesNotMatch(notices[0].body, /자동으로 다시 시작/);
+  await delay(2500);
+  assert.equal(engine.runtime.get(app.id).status, 'error');
+  await fs.rm(path.join(project, 'marker'));
+  await engine.setAppOptions(app.id, { autoRestart: true });
+  await engine.start(app.id, 'dev');
+  const values = await observed(project);
+  assert.equal(engine.runtime.get(app.id).status, 'running');
+  assert.match(notices[1].body, /자동으로 다시 시작/);
+  assert.match(engine.logs(app.id), /자동 재시작합니다 \(1\/3\)/);
+  assert.ok(changes.length > 0);
+  await engine.stop(app.id); assert.throws(() => process.kill(values.pid, 0), /ESRCH/);
+  assert.deepEqual((await engine.list()).groups[0].apps[0].options, { waitForPrevious: false, autoRestart: true });
+});
+
+test('export omits personal values and import recreates groups while skipping missing folders', async t => {
+  const { engine, app, project, dataDir } = await fixture(t);
+  await engine.saveEnv(app.id, 'dev', { TOKEN: 'secret-value' }, undefined, { enabled: true, host: 'bastion', user: 'ubuntu', keyPath: '/tmp/key.pem', sshPort: 22, localPort: 13316, remoteHost: 'db', remotePort: 3306 });
+  await engine.setAppOptions(app.id, { waitForPrevious: true });
+  const exported = await engine.exportConfig();
+  const text = JSON.stringify(exported);
+  assert.doesNotMatch(text, /secret-value|key\.pem|bastion/);
+  assert.equal(exported.groups[0].apps[0].options.waitForPrevious, true);
+  exported.groups[0].apps.push({ name: 'gone', path: path.join(project, 'missing') });
+  const target = new Engine({ dataDir: path.join(dataDir, '../import') });
+  try {
+    const result = await target.importConfig(exported);
+    assert.deepEqual([result.groups, result.apps, result.skipped.length], [1, 1, 1]);
+    assert.match(result.skipped[0], /^gone: /);
+    const imported = (await target.list()).groups[0].apps[0];
+    assert.equal(imported.path, app.path); assert.equal(imported.options.waitForPrevious, true); assert.deepEqual(imported.scripts, app.scripts);
+    await assert.rejects(target.importConfig({ groups: [] }), /Dev Launcher 설정 파일이 아닙니다/);
+  } finally { await target.shutdown(); }
+});
+
+test('clearLogs empties retained output while the process keeps running', async t => {
+  const { engine, app, project } = await fixture(t, 'node server.cjs');
+  await engine.start(app.id, 'dev'); await observed(project);
+  assert.match(engine.logs(app.id), /DEV 실행/);
+  engine.clearLogs(app.id);
+  assert.equal(engine.logs(app.id), '');
+  assert.equal(engine.runtime.get(app.id).status, 'running');
+});
