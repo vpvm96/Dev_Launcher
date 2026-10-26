@@ -592,6 +592,15 @@ class Engine {
     for (let i = 0; i < 30; i++) { if (!(await this.portOwners(port)).some(owner => owner.pid === pid)) return; await delay(100); }
     try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
   }
+  // 그룹 안 프로젝트들의 로그를 시간순으로 합쳐 최근 limit줄을 돌려줍니다.
+  groupLogs(groupId, limit = 3000) {
+    const lines = [];
+    this.group(groupId).apps.forEach(app => {
+      const r = this.runtime.get(app.id);
+      if (r) for (const entry of r.log.entries(this.redactor(r))) lines.push({ ...entry, id: app.id, name: app.name });
+    });
+    return lines.sort((a, b) => a.time - b.time).slice(-limit);
+  }
   // 종료·재시작으로 로그를 비우기 전에 직전 실행 로그로 보관합니다. 비밀값은 보관 시점에 가립니다.
   archiveLog(id, r) {
     const text = r?.log.text(this.redactor(r));

@@ -50,3 +50,11 @@ test('map transforms every returned line such as redaction', () => {
   assert.deepEqual([view.lines, view.partial], [['token=[숨김]'], 'part [숨김]']);
   assert.equal(log.text(text => text.replace('abc', 'x')), 'token=x\npart x');
 });
+
+test('entries include line times and the partial tail', () => {
+  const log = new LogBuffer();
+  log.push('done\nhalf');
+  const entries = log.entries(text => text.toUpperCase());
+  assert.deepEqual(entries.map(entry => entry.text), ['DONE', 'HALF']);
+  assert.ok(entries.every(entry => typeof entry.time === 'number'));
+});

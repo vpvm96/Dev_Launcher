@@ -14,6 +14,12 @@ class LogBuffer {
   text(map = text => text) {
     return [...this.lines.map(line => map(line.text)), map(this.partial)].join('\n');
   }
+  // 줄마다 기록된 시간을 함께 돌려줍니다. 여러 프로젝트 로그를 시간순으로 합칠 때 사용합니다.
+  entries(map = text => text) {
+    const entries = this.lines.map(line => ({ time: line.time, text: map(line.text) }));
+    if (this.partial) entries.push({ time: this.partialTime, text: map(this.partial) });
+    return entries;
+  }
   // cursor는 마지막으로 받은 줄 번호입니다. 버퍼가 비워졌거나 오래된 줄이 잘렸으면 전체를 다시 보냅니다.
   since(cursor, map = text => text) {
     const first = this.lines[0]?.seq ?? this.next;

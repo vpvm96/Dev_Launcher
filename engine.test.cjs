@@ -776,3 +776,18 @@ test('personal values are encrypted at rest when a secret box is provided', asyn
     assert.equal((await broken.list()).groups[0].apps[0].id, app.id);
   } finally { await broken.shutdown(); }
 });
+test('groupLogs merges project logs in time order with names and hidden secrets', async t => {
+  const { engine, app, root, project } = await fixture(t, 'node server.cjs');
+  await fs.writeFile(path.join(project, 'server.cjs'), "console.log('first from a ' + process.env.TOKEN); setTimeout(()=>console.log('third from a'), 400); setInterval(()=>{},1000);");
+  const other = path.join(root, 'other'); await fs.mkdir(other);
+  await fs.writeFile(path.join(other, 'package.json'), JSON.stringify({ scripts: { dev: 'node server.cjs' } }));
+  await fs.writeFile(path.join(other, 'server.cjs'), "setTimeout(()=>console.log('second from b'), 200); setInterval(()=>{},1000);");
+  const groupId = engine.config.groups[0].id;
+  const added = await engine.addApp(groupId, { path: other, name: 'other' });
+  await engine.start(app.id, 'dev'); await engine.start(added.id, 'dev');
+  for (let i = 0; i < 80 && !engine.logs(app.id).includes('third'); i++) await delay(25);
+  const lines = engine.groupLogs(groupId).filter(line => /from/.test(line.text));
+  assert.deepEqual(lines.map(line => [line.name, line.text]), [[app.name, 'first from a [숨김]'], ['other', 'second from b'], [app.name, 'third from a']]);
+  assert.ok(lines.every((line, i) => i === 0 || line.time >= lines[i - 1].time));
+  assert.equal(lines[0].id, app.id);
+});

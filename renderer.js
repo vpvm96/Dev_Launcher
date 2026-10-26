@@ -79,6 +79,7 @@ async function refresh(force = false) {
 }
 // 마지막으로 받은 줄 이후만 가져와 화면에 덧붙인다. 버퍼가 비워졌으면 전체를 다시 그린다.
 async function refreshLogs() {
+  if (state.groupLogs) { await refreshGroupLogs(); return; }
   if (!state.logs || !$('modal').open || !$('log-output')) return;
   const id = state.logs;
   const tail = await api.logTail(id, state.logCursor);
@@ -159,6 +160,7 @@ function render() {
   $('group-down').disabled = !group || index >= state.groups.length - 1;
   $('add-app').disabled = !group;
   $('group-mode').disabled = !group;
+  $('group-logs').disabled = !apps.length;
   $('app-count').textContent = String(apps.length);
   $('running-count').textContent = `${apps.filter(active).length}개 실행 중`;
   renderGroupMode(apps);
@@ -540,7 +542,7 @@ function renderAnsi(text, target, style) {
   }
   push(text.slice(last));
 }
-function resetLogs() { state.logs = null; state.logLines = []; state.logPartial = ''; state.logCursor = null; }
+function resetLogs() { state.logs = null; state.logLines = []; state.logPartial = ''; state.logCursor = null; state.groupLogs = null; state.groupLogSignature = ''; }
 const logContent = () => [...state.logLines, state.logPartial].join('\n');
 const logMatches = (line) => {
   const filter = state.logFilter.trim().toLowerCase();
@@ -566,6 +568,66 @@ function drawLogs(lines) {
   }
   if (atBottom) body.scrollTop = body.scrollHeight;
 }
+// 그룹의 모든 프로젝트 로그를 시간순으로 합쳐 보여 준다. 프로젝트 이름은 색으로 구분한다.
+function showGroupLogs() {
+  const group = currentGroup();
+  if (!group) return;
+  modal(`${group.name} 그룹 로그`, 'GROUP / PROCESS OUTPUT');
+  const tools = el('div', 'log-tools');
+  const search = el('input');
+  search.type = 'search';
+  search.placeholder = '로그 검색';
+  search.setAttribute('aria-label', '그룹 로그 검색');
+  const source = el('select');
+  source.setAttribute('aria-label', '로그 프로젝트');
+  const all = el('option', '', '모든 프로젝트');
+  all.value = '';
+  source.append(all, ...group.apps.map((app) => { const option = el('option', '', app.name); option.value = app.id; return option; }));
+  const redraw = () => { state.groupLogSignature = ''; drawGroupLogs(); };
+  search.addEventListener('input', redraw);
+  source.addEventListener('change', redraw);
+  const copy = button('복사', () => attempt(async () => {
+    await api.copyText(visibleGroupLines().map((line) => `${new Date(line.time).toLocaleTimeString()} [${line.name}] ${stripAnsi(line.text)}`).join('\n'));
+    toast('그룹 로그를 복사했어요.');
+  }));
+  tools.append(search, source, copy);
+  const output = el('pre', 'log-output', '로그 불러오는 중…');
+  output.id = 'group-log-output';
+  $('modal-body').append(tools, output);
+  state.groupLogs = { id: group.id, lines: [], colors: new Map(group.apps.map((app, index) => [app.id, index % 6])), search, source };
+  void attempt(async () => { await refreshGroupLogs(); $('modal-body').scrollTop = $('modal-body').scrollHeight; });
+}
+async function refreshGroupLogs() {
+  const view = state.groupLogs;
+  if (!view || !$('modal').open) return;
+  const lines = await api.groupLogs(view.id);
+  if (state.groupLogs !== view) return;
+  view.lines = lines;
+  drawGroupLogs();
+}
+function visibleGroupLines() {
+  const view = state.groupLogs;
+  const filter = view.search.value.trim().toLowerCase();
+  return view.lines.filter((line) => (!view.source.value || line.id === view.source.value) && (!filter || stripAnsi(line.text).toLowerCase().includes(filter)));
+}
+function drawGroupLogs() {
+  const output = $('group-log-output');
+  if (!output) return;
+  const lines = visibleGroupLines();
+  const signature = `${lines.length}:${lines.at(-1)?.time}:${lines.at(-1)?.text}`;
+  if (signature === state.groupLogSignature) return;
+  state.groupLogSignature = signature;
+  const body = $('modal-body');
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 70;
+  output.replaceChildren();
+  if (!lines.length) output.textContent = state.groupLogs.lines.length ? '검색 결과가 없습니다.' : '아직 출력된 로그가 없습니다.';
+  for (const line of lines) {
+    output.append(el('span', 'log-time', `${new Date(line.time).toLocaleTimeString()} `), el('span', `log-source source-${state.groupLogs.colors.get(line.id) ?? 0}`, `${line.name} │ `));
+    renderAnsi(`${line.text}\n`, output, plainStyle());
+  }
+  if (atBottom) body.scrollTop = body.scrollHeight;
+}
+
 // 종료·재시작 직전까지의 로그를 보여 준다. 다시 갱신되지 않는 보관본이다.
 function showPreviousLogs(app, previous) {
   modal(`${app.name} 직전 실행 로그`, `${upper(previous.mode)} / ${new Date(previous.endedAt).toLocaleTimeString()} 종료`);
@@ -885,6 +947,7 @@ $('group-mode').addEventListener('change', () => {
   toast(`${upper(value)} 환경을 선택했어요. 다음 실행 또는 재시작 시 적용됩니다.`);
 });
 $('start-selected').addEventListener('click', () => { void startSelected(); });
+$('group-logs').addEventListener('click', showGroupLogs);
 $('stop-all').addEventListener('click', () => { void Promise.all((currentGroup()?.apps || []).filter(active).map((app) => action(app, 'stop'))); });
 api.onChange(() => { void attempt(() => refresh()); });
 void attempt(() => refresh(true));

@@ -612,3 +612,21 @@ test('cards show the current git branch', { timeout: 40000 }, async t => {
   await expect(page.locator('.app-card .branch')).toHaveText('⎇ feat/checkout');
   assert.deepEqual(errors, []);
 });
+
+test('group log dialog merges project output and filters by project', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await fs.writeFile(path.join(project, 'server.cjs'), "// 그룹 로그용 출력\nconsole.log('hello from user');require('node:http').createServer((q,s)=>s.end('ok')).listen(Number(process.env.PORT));");
+  const second = path.join(project, '../second'); await fs.mkdir(second);
+  await fs.writeFile(path.join(second, 'package.json'), JSON.stringify({ scripts: { dev: 'node server.cjs' } }));
+  await fs.writeFile(path.join(second, 'server.cjs'), "console.log('hello from second'); setInterval(()=>{},1000);");
+  await page.evaluate((dir) => window.launcher.addApp('test-group', { path: dir, name: 'second' }), second);
+  await page.reload();
+  await page.locator('#start-selected').click();
+  await page.getByRole('button', { name: '그룹 로그', exact: true }).click();
+  await expect(page.locator('#group-log-output')).toContainText('user │ hello from user');
+  await expect(page.locator('#group-log-output')).toContainText('second │ hello from second');
+  await page.getByLabel('로그 프로젝트', { exact: true }).selectOption({ label: 'second' });
+  await expect(page.locator('#group-log-output')).not.toContainText('hello from user');
+  await expect(page.locator('#group-log-output')).toContainText('hello from second');
+  assert.deepEqual(errors, []);
+});
