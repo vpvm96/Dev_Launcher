@@ -584,3 +584,16 @@ test('port conflicts show the owning process and stopping it lets the project st
   await expect(page.locator('.app-card .status')).toHaveText('준비됨');
   assert.deepEqual(errors, []);
 });
+
+test('API address picker offers ports of other projects in the same group', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  const backend = path.join(project, '../backend'); await fs.mkdir(backend);
+  await fs.writeFile(path.join(backend, 'package.json'), JSON.stringify({ scripts: { dev: 'node server.cjs --port 9123' } }));
+  await page.evaluate((dir) => window.launcher.addApp('test-group', { path: dir, name: 'backend' }), backend);
+  await page.reload();
+  await page.getByRole('button', { name: '환경 설정', exact: true }).first().click();
+  await page.getByLabel('API_URL 로컬 주소 선택', { exact: true }).selectOption('http://localhost:9123');
+  await expect(page.getByLabel('API_URL 개인 설정', { exact: true })).toHaveValue('http://localhost:9123');
+  await expect(page.locator('.env-row').filter({ hasText: 'API_URL' }).getByRole('checkbox')).toBeChecked();
+  assert.deepEqual(errors, []);
+});

@@ -651,6 +651,12 @@ async function editEnv(app, selectedMode = mode(app), initialTab) {
   const drafts = Object.assign(Object.create(null), data.drafts, data.overrides);
   const bases = new Map(data.base.map(({ key, value }) => [key, value]));
   const keys = [...new Set([...bases.keys(), ...Object.keys(drafts), ...Object.keys(overrides)])];
+  // 같은 그룹에서 포트를 아는 다른 프로젝트를 API 주소 후보로 쓴다. 실행 중인 프로젝트를 먼저 보여 준다.
+  const siblings = state.groups.find((group) => group.apps.some((item) => item.id === app.id))?.apps || [];
+  const localTargets = siblings.filter((item) => item.id !== app.id)
+    .map((item) => ({ name: item.name, running: active(item), port: active(item) ? item.port : item.ports?.[mode(item)] || item.port }))
+    .filter((item) => item.port)
+    .sort((a, b) => Number(b.running) - Number(a.running));
 
   const script = scriptField(`${upper(selectedMode)} 실행 스크립트`, data.script, data.availableScripts, data.manualScript);
   const envFile = field(`${upper(selectedMode)} 환경 파일`, data.envFile || '', '.env.development');
@@ -801,10 +807,23 @@ async function editEnv(app, selectedMode = mode(app), initialTab) {
       controls.append(label, value);
       row.append(controls);
       if (/API.*(URL|HOST)|BASE.*URL|API_URL/i.test(key)) {
-        row.append(button('로컬 주소 입력', () => {
-          toggle.checked = true; value.disabled = false; value.value = 'http://localhost:8080'; value.type = 'text';
-          overrides[key] = value.value; value.focus(); value.select();
-        }, 'quick-api'));
+        const fill = (address) => {
+          toggle.checked = true; value.disabled = false; value.value = address; value.type = 'text';
+          drafts[key] = address; overrides[key] = address; value.focus(); value.select();
+        };
+        if (localTargets.length) {
+          const picker = el('select', 'quick-api');
+          picker.setAttribute('aria-label', `${key} 로컬 주소 선택`);
+          const placeholder = el('option', '', '로컬 주소 입력…');
+          placeholder.value = '';
+          picker.append(placeholder, ...localTargets.map((target) => {
+            const option = el('option', '', `${target.name} · :${target.port}${target.running ? ' (실행 중)' : ''}`);
+            option.value = `http://localhost:${target.port}`;
+            return option;
+          }));
+          picker.addEventListener('change', () => { if (picker.value) fill(picker.value); picker.value = ''; });
+          row.append(picker);
+        } else row.append(button('로컬 주소 입력', () => fill('http://localhost:8080'), 'quick-api'));
       }
       rows.append(row);
     }
