@@ -110,9 +110,11 @@ test('environment settings edit the saved launch script', { timeout: 40000 }, as
   pkg.scripts.dev = 'dotenv -e env/.env.dev -- node server.cjs';
   await fs.writeFile(path.join(project, 'package.json'), JSON.stringify(pkg));
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: '실행 명령', exact: true }).click();
   await page.getByLabel('DEV 실행 스크립트', { exact: true }).selectOption('dev');
   await page.getByRole('button', { name: '설정 저장', exact: true }).click();
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: '실행 명령', exact: true }).click();
   await expect(page.getByLabel('DEV 실행 스크립트', { exact: true })).toHaveValue('dev');
   await page.keyboard.press('Escape');
   await page.locator('#start-selected').click();
@@ -125,6 +127,7 @@ test('SSH settings persist per mode and explicitly apply local DB overrides', { 
   await fs.writeFile(pem, 'fixture-key-content', { mode: 0o600 });
   await instance.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, pem);
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: 'SSH 터널', exact: true }).click();
   await expect(page.locator('#tunnel-fields')).toBeHidden();
   await page.getByLabel('SSH 터널 사용', { exact: true }).check();
   await page.getByRole('button', { name: '키 파일 선택', exact: true }).click();
@@ -148,6 +151,7 @@ test('SSH settings persist per mode and explicitly apply local DB overrides', { 
   assert.ok(!configText.includes('fixture-key-content'));
   await page.reload();
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: 'SSH 터널', exact: true }).click();
   await expect(page.getByLabel('SSH 터널 사용', { exact: true })).toBeChecked();
   await expect(page.getByLabel('로컬 포트', { exact: true })).toHaveValue('13317');
   await page.locator('#modal-body').evaluate(node => { node.scrollTop = 0; });
@@ -155,12 +159,14 @@ test('SSH settings persist per mode and explicitly apply local DB overrides', { 
   await page.keyboard.press('Escape');
   await page.getByLabel('user 실행 환경', { exact: true }).selectOption('prod');
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: 'SSH 터널', exact: true }).click();
   await expect(page.getByLabel('SSH 터널 사용', { exact: true })).not.toBeChecked();
   await expect(page.getByLabel('DB_HOST 개인 설정', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '설정 저장', exact: true }).click();
   assert.equal((await page.evaluate(() => window.launcher.env('test-app', 'dev'))).tunnel.enabled, true);
   await page.getByLabel('user 실행 환경', { exact: true }).selectOption('dev');
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: 'SSH 터널', exact: true }).click();
   await page.getByLabel('SSH 터널 사용', { exact: true }).uncheck();
   await page.getByRole('button', { name: '설정 저장', exact: true }).click();
   assert.equal((await page.evaluate(() => window.launcher.env('test-app', 'dev'))).tunnel?.enabled || false, false);
@@ -368,6 +374,7 @@ test('manual shell commands can be registered, edited and run from the UI', { ti
   const addedApp = config.groups[0].apps[1];
   assert.equal(addedApp.manualScripts.dev, true);
   await page.getByRole('button', { name: '환경 설정', exact: true }).nth(1).click();
+  await page.getByRole('tab', { name: '실행 명령', exact: true }).click();
   await expect(page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true })).toHaveValue('sh "./start script.sh" first');
   await page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true }).fill('sh "./start script.sh" "hello world"');
   await page.screenshot({ path: 'artifacts/manual-script-settings.png' });
@@ -375,10 +382,12 @@ test('manual shell commands can be registered, edited and run from the UI', { ti
   await page.getByRole('button', { name: '실행', exact: true }).nth(1).click();
   await expect.poll(async () => { try { return await fs.readFile(path.join(added, 'result.txt'), 'utf8'); } catch { return ''; } }).toBe('hello world');
   await page.getByRole('button', { name: '환경 설정', exact: true }).first().click();
+  await page.getByRole('tab', { name: '실행 명령', exact: true }).click();
   await page.getByLabel('DEV 실행 스크립트', { exact: true }).selectOption('__manual__');
   await page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true }).fill('sh ./start.sh');
   await page.getByRole('button', { name: '설정 저장', exact: true }).click();
   await page.getByRole('button', { name: '환경 설정', exact: true }).first().click();
+  await page.getByRole('tab', { name: '실행 명령', exact: true }).click();
   await expect(page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true })).toHaveValue('sh ./start.sh');
   await page.getByLabel('DEV 실행 스크립트', { exact: true }).selectOption('start:dev');
   await expect(page.getByLabel('DEV 실행 스크립트 직접 입력', { exact: true })).toBeHidden();
@@ -427,9 +436,13 @@ test('log dialog renders terminal colors, filters lines and clears output', { ti
 test('settings add custom modes and save project options shown as badges', { timeout: 40000 }, async t => {
   const { page, errors } = await setup(t);
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: '환경·옵션', exact: true }).click();
   await page.getByLabel('새 환경 이름').fill('staging');
   await page.getByRole('button', { name: '＋ 환경 추가', exact: true }).click();
   await expect(page.getByRole('button', { name: 'STAGING 환경 삭제', exact: true })).toBeVisible();
+  await page.getByLabel('편집할 환경', { exact: true }).selectOption('staging');
+  await expect(page.locator('#modal-eyebrow')).toContainText('STAGING');
+  await expect(page.getByRole('tab', { name: '환경·옵션', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByLabel('비정상 종료 시 자동 재시작', { exact: true }).check();
   await page.getByRole('button', { name: '설정 저장', exact: true }).click();
   await expect(page.locator('#modal')).not.toBeVisible();
@@ -438,6 +451,7 @@ test('settings add custom modes and save project options shown as badges', { tim
   await page.getByLabel('user 실행 환경', { exact: true }).selectOption('staging');
   await expect(page.locator('#group-mode')).toHaveValue('staging');
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await page.getByRole('tab', { name: '환경·옵션', exact: true }).click();
   await expect(page.locator('#modal-eyebrow')).toContainText('STAGING');
   await page.getByRole('button', { name: 'STAGING 환경 삭제', exact: true }).click();
   await expect(page.getByRole('button', { name: 'STAGING 환경 삭제', exact: true })).toBeHidden();

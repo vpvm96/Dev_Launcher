@@ -511,14 +511,56 @@ async function showLogs(app) {
   });
 }
 
-async function editEnv(app) {
-  const selectedMode = mode(app);
+// 환경 설정은 탭으로 나누고, 창 안에서 편집할 실행 환경을 바꿀 수 있다.
+async function editEnv(app, selectedMode = mode(app), initialTab) {
   modal(`${app.name} 환경 설정`, `${upper(selectedMode)} / LOCAL OVERRIDES`);
   $('modal-body').append(el('p', 'help', '환경 설정 불러오는 중…'));
   const revision = state.modalRevision;
   const data = await api.env(app.id, selectedMode);
   if (!$('modal').open || state.modalRevision !== revision) return;
   $('modal-body').replaceChildren();
+  const container = el('div', 'env-editor');
+  $('modal-body').append(container);
+  let dirty = false, currentTab = initialTab || (data.envFileMissing ? 'run' : 'env');
+  const markDirty = (event) => { if (!event.target.closest('[data-instant]')) dirty = true; };
+  container.addEventListener('input', markDirty);
+  container.addEventListener('change', markDirty);
+
+  const switchRow = el('div', 'env-switch');
+  const switchLabel = el('label', 'check-label', '편집할 환경');
+  const switcher = el('select');
+  switcher.setAttribute('aria-label', '편집할 환경');
+  switchLabel.append(switcher);
+  switchRow.dataset.instant = '1';
+  switchRow.append(switchLabel);
+  const drawSwitcher = (modes) => {
+    switcher.replaceChildren(...modes.map((name) => { const option = el('option', '', upper(name)); option.value = name; return option; }));
+    switcher.value = selectedMode;
+  };
+  switcher.addEventListener('change', () => {
+    if (dirty && !window.confirm('저장하지 않은 변경 사항이 사라집니다. 편집할 환경을 바꿀까요?')) { switcher.value = selectedMode; return; }
+    void attempt(() => editEnv(app, switcher.value, currentTab));
+  });
+
+  const tabList = el('div', 'tabs');
+  tabList.setAttribute('role', 'tablist');
+  const panels = {};
+  const showTab = (name) => {
+    currentTab = name;
+    for (const [key, item] of Object.entries(panels)) { item.tab.setAttribute('aria-selected', String(key === name)); item.panel.hidden = key !== name; }
+  };
+  for (const [key, label] of [['env', '환경변수'], ['run', '실행 명령'], ['modes', '환경·옵션'], ['tunnel', 'SSH 터널']]) {
+    const tab = button(label, () => showTab(key), 'tab');
+    tab.setAttribute('role', 'tab');
+    const panel = el('div', 'tab-panel');
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-label', label);
+    panels[key] = { tab, panel };
+    tabList.append(tab);
+  }
+  container.append(switchRow, tabList, ...Object.values(panels).map((item) => item.panel));
+  const panel = (key) => panels[key].panel;
+
   const overrides = Object.assign(Object.create(null), data.overrides);
   const drafts = Object.assign(Object.create(null), data.drafts, data.overrides);
   const bases = new Map(data.base.map(({ key, value }) => [key, value]));
@@ -530,7 +572,7 @@ async function editEnv(app) {
   const missing = el('p', 'inline-error', data.envFileMissing ? `환경 파일 ${data.envFile}을(를) 찾을 수 없습니다. 경로를 고친 뒤 저장해 주세요.` : '');
   missing.setAttribute('role', 'alert');
   missing.hidden = !data.envFileMissing;
-  $('modal-body').append(
+  panel('run').append(
     script.wrapper, envFile.wrapper, missing,
     el('p', 'help', '감지된 스크립트를 선택하거나 sh ./start.sh처럼 직접 입력하세요. 명령은 프로젝트 폴더에서 실행되며 다음 실행 또는 재시작부터 적용됩니다. 환경 파일은 프로젝트 기준 상대 경로입니다.'),
   );
@@ -540,14 +582,16 @@ async function editEnv(app) {
   modesSection.append(el('h3', '', '실행 환경'));
   const modeList = el('div', 'mode-list');
   const drawModes = (modes) => {
+    drawSwitcher(modes);
     modeList.replaceChildren(...modes.map((name) => {
       const chip = el('span', 'mode-chip', upper(name));
       if (name !== 'dev') {
         const remove = button('×', () => attempt(async () => {
           const next = await api.removeMode(app.id, name);
-          drawModes(next);
           toast(`${upper(name)} 환경을 삭제했어요.`);
           await refresh(true);
+          if (name === selectedMode) await editEnv(app, 'dev', 'modes');
+          else drawModes(next);
         }), 'chip-remove');
         remove.setAttribute('aria-label', `${upper(name)} 환경 삭제`);
         chip.append(remove);
@@ -565,20 +609,21 @@ async function editEnv(app) {
     const next = await api.addMode(app.id, name);
     newMode.value = '';
     drawModes(next);
-    toast(`${upper(name)} 환경을 추가했어요. 카드에서 환경을 선택한 뒤 실행 스크립트를 설정하세요.`);
+    toast(`${upper(name)} 환경을 추가했어요. 위의 편집할 환경에서 선택해 실행 스크립트를 설정하세요.`);
     await refresh(true);
   });
   onEnter(newMode, addMode);
   newModeRow.append(newMode, button('＋ 환경 추가', addMode));
-  modesSection.append(modeList, newModeRow, el('p', 'help', '환경마다 실행 스크립트, 환경 파일, 개인 환경값, SSH 터널을 따로 저장합니다. DEV는 삭제할 수 없습니다.'));
-  $('modal-body').append(modesSection);
+  modesSection.dataset.instant = '1';
+  modesSection.append(modeList, newModeRow, el('p', 'help', '환경 추가·삭제는 바로 반영됩니다. 환경마다 실행 스크립트, 환경 파일, 개인 환경값, SSH 터널을 따로 저장합니다. DEV는 삭제할 수 없습니다.'));
+  panel('modes').append(modesSection);
 
   const optionSection = el('section', 'option-section');
   optionSection.append(el('h3', '', '프로젝트 옵션'));
   const waitOption = checkField('앞 프로젝트 준비 후 실행', data.options?.waitForPrevious === true, '선택 실행 시 목록에서 바로 앞 프로젝트의 포트가 열릴 때까지 기다린 뒤 시작합니다.');
   const restartOption = checkField('비정상 종료 시 자동 재시작', data.options?.autoRestart === true, '프로세스가 예기치 않게 종료되면 알림을 보내고 연속 3회까지 다시 시작합니다.');
   optionSection.append(waitOption.wrapper, restartOption.wrapper);
-  $('modal-body').append(optionSection);
+  panel('modes').append(optionSection);
 
   const tunnelSection = el('section', 'tunnel-settings');
   const tunnelLabel = el('label', 'check-label');
@@ -618,12 +663,13 @@ async function editEnv(app) {
     for (const key of ['DB_HOST', 'DB_PORT']) if (!keys.includes(key)) keys.push(key);
     filter.value = '';
     drawRows();
+    showTab('env');
     toast('DB_HOST와 DB_PORT에 로컬 접속 주소를 입력했어요. 설정을 저장해 주세요.');
   }), el('p', 'help', 'DB 주소 적용을 누르면 DB_HOST=127.0.0.1, DB_PORT=로컬 포트를 개인 환경변수로 설정합니다. 원본 환경 파일은 수정하지 않습니다.'));
   tunnelSection.append(tunnelFields);
-  $('modal-body').append(tunnelSection);
+  panel('tunnel').append(tunnelSection);
 
-  $('modal-body').append(el('p', 'help', '기본 환경 파일 위에 개인 설정을 적용합니다. 체크를 끄면 기본값을 사용하며 직접 입력한 값은 다음 사용을 위해 보관합니다. 체크한 채 비워두면 빈 문자열을 적용합니다.'));
+  panel('env').append(el('p', 'help', '기본 환경 파일 위에 개인 설정을 적용합니다. 체크를 끄면 기본값을 사용하며 직접 입력한 값은 다음 사용을 위해 보관합니다. 체크한 채 비워두면 빈 문자열을 적용합니다.'));
   const tools = el('div', 'env-tools');
   const filter = el('input');
   filter.type = 'search';
@@ -636,7 +682,7 @@ async function editEnv(app) {
   revealLabel.append(reveal, document.createTextNode('값 표시'));
   tools.append(filter, revealLabel);
   const rows = el('div');
-  $('modal-body').append(tools, rows);
+  panel('env').append(tools, rows);
   function drawRows() {
     rows.replaceChildren();
     const matching = keys.filter((key) => key.toLowerCase().includes(filter.value.toLowerCase()));
@@ -691,10 +737,11 @@ async function editEnv(app) {
     keys.push(key); overrides[key] = ''; newKey.value = ''; filter.value = '';
     drawRows();
   }));
-  $('modal-body').append(newKeyRow);
+  panel('env').append(newKeyRow);
+  showTab(currentTab);
 
   const save = async (restart) => {
-    if (tunnelEnabled.checked) for (const input of Object.values(tunnelInputs)) { input.required = true; if (!input.reportValidity()) return; }
+    if (tunnelEnabled.checked) for (const input of Object.values(tunnelInputs)) { input.required = true; if (!input.checkValidity()) { showTab('tunnel'); input.reportValidity(); return; } }
     const tunnel = {
       enabled: tunnelEnabled.checked,
       ...Object.fromEntries(Object.entries(tunnelInputs).map(([key, input]) => [key, key.endsWith('Port') ? Number(input.value) : input.value.trim()])),
@@ -702,7 +749,7 @@ async function editEnv(app) {
     await api.saveEnv(app.id, selectedMode, overrides, script.value || (script.manual ? '' : undefined), tunnel, drafts, script.manual);
     if (envFile.input.value.trim() !== (data.envFile || '')) await api.setEnvFile(app.id, selectedMode, envFile.input.value.trim());
     await api.setAppOptions(app.id, { waitForPrevious: waitOption.input.checked, autoRestart: restartOption.input.checked });
-    if (restart) await api.restart(app.id, selectedMode);
+    if (restart) { await api.restart(app.id, selectedMode); state.modes.set(app.id, selectedMode); }
     closeModal();
     toast(restart ? '환경을 저장하고 다시 시작했어요.' : '개인 환경 설정을 저장했어요.');
     await refresh(true);
