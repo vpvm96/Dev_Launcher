@@ -62,7 +62,7 @@ async function refresh(force = false) {
     const update = await api.updateStatus();
     renderUpdateStatus(update);
     if (!$('auto-open').disabled) $('auto-open').checked = data.autoOpen;
-    if (!$('tray-mode').disabled) $('tray-mode').checked = data.trayMode;
+    state.trayMode = data.trayMode;
     state.groups = data.groups;
     if (!currentGroup()) state.group = state.groups[0]?.id || null;
     for (const group of state.groups) for (const app of group.apps) {
@@ -780,46 +780,67 @@ void attempt(() => refresh(true));
 setInterval(() => { void attempt(() => refresh()); }, 5000);
 setInterval(() => { void attempt(() => refreshLogs()); }, 1000);
 
-for (const [id, method, on, off] of [
-  ['auto-open', 'setAutoOpen', '실행 후 브라우저가 자동으로 열립니다.', '브라우저 자동 열기를 껐어요.'],
-  ['tray-mode', 'setTrayMode', '메뉴 바에 상주합니다. 창을 닫아도 서버가 유지됩니다.', '메뉴 바 상주를 껐어요. 창을 닫으면 서버도 종료됩니다.'],
-]) {
-  $(id).addEventListener('change', async () => {
-    const checkbox = $(id);
-    checkbox.disabled = true;
-    try { await api[method](checkbox.checked); toast(checkbox.checked ? on : off); }
-    catch (error) { checkbox.checked = !checkbox.checked; toast(error.message, true); }
-    finally { checkbox.disabled = false; }
-  });
-}
+$('auto-open').addEventListener('change', async () => {
+  const checkbox = $('auto-open');
+  checkbox.disabled = true;
+  try { await api.setAutoOpen(checkbox.checked); toast(checkbox.checked ? '실행 후 브라우저가 자동으로 열립니다.' : '브라우저 자동 열기를 껐어요.'); }
+  catch (error) { checkbox.checked = !checkbox.checked; toast(error.message, true); }
+  finally { checkbox.disabled = false; }
+});
 
-$('export-config').addEventListener('click', () => attempt(async () => {
-  const file = await api.exportConfig();
-  if (file) toast('그룹 구성을 내보냈어요. 개인 환경값과 SSH 키 경로는 포함하지 않습니다.');
-}));
-$('import-config').addEventListener('click', () => attempt(async () => {
-  const result = await api.importConfig();
-  if (!result) return;
-  await refresh(true);
-  const skipped = result.skipped.length ? ` 건너뜀 ${result.skipped.length}개: ${result.skipped.join(' / ')}` : '';
-  toast(`그룹 ${result.groups}개, 프로젝트 ${result.apps}개를 가져왔어요.${skipped}`, result.skipped.length > 0);
-}));
+// 자주 쓰지 않는 앱 전체 설정은 사이드바 대신 앱 설정 창에 모은다.
+function openAppSettings() {
+  modal('앱 설정', 'DEV LAUNCHER');
+  const general = el('section', 'option-section');
+  general.append(el('h3', '', '실행 유지'));
+  const tray = checkField('메뉴 바 상주', state.trayMode === true, '창을 닫아도 서버를 유지하고, 메뉴 바 아이콘에서 실행 상태 확인과 실행·종료·열기를 할 수 있습니다.');
+  tray.input.addEventListener('change', async () => {
+    tray.input.disabled = true;
+    try {
+      await api.setTrayMode(tray.input.checked);
+      state.trayMode = tray.input.checked;
+      toast(tray.input.checked ? '메뉴 바에 상주합니다. 창을 닫아도 서버가 유지됩니다.' : '메뉴 바 상주를 껐어요. 창을 닫으면 서버도 종료됩니다.');
+    } catch (error) { tray.input.checked = !tray.input.checked; toast(error.message, true); }
+    finally { tray.input.disabled = false; }
+  });
+  general.append(tray.wrapper);
+
+  const config = el('section', 'option-section');
+  config.append(el('h3', '', '설정 파일'));
+  const tools = el('div', 'config-tools');
+  tools.append(
+    button('내보내기', () => attempt(async () => {
+      const file = await api.exportConfig();
+      if (file) toast('그룹 구성을 내보냈어요. 개인 환경값과 SSH 키 경로는 포함하지 않습니다.');
+    })),
+    button('가져오기', () => attempt(async () => {
+      const result = await api.importConfig();
+      if (!result) return;
+      await refresh(true);
+      const skipped = result.skipped.length ? ` 건너뜀 ${result.skipped.length}개: ${result.skipped.join(' / ')}` : '';
+      toast(`그룹 ${result.groups}개, 프로젝트 ${result.apps}개를 가져왔어요.${skipped}`, result.skipped.length > 0);
+    })),
+  );
+  config.append(tools, el('p', 'help', '내보내기는 그룹과 프로젝트 구성을 JSON으로 저장하며 개인 환경값과 SSH 설정은 제외합니다. 가져오기는 파일의 그룹을 새 그룹으로 추가합니다.'));
+
+  const restart = el('section', 'option-section');
+  restart.append(el('h3', '', '앱 재시작'), el('p', 'help', '런처에서 실행한 서버를 모두 종료한 뒤 런처를 다시 엽니다.'), button('앱 재시작', confirmRestart));
+  $('modal-body').append(general, config, restart);
+}
+$('app-settings').addEventListener('click', openAppSettings);
 
 async function restartApp() {
-  const control = $('restart-app');
-  control.disabled = true;
-  control.textContent = '재시작 중…';
   try { await api.restartApp(); }
-  catch (error) { control.disabled = false; control.textContent = '앱 재시작'; toast(error.message, true); }
+  catch (error) { toast(error.message, true); }
 }
 // 실행 중인 서버가 있으면 종료된다는 점을 확인받은 뒤 재시작한다.
-$('restart-app').addEventListener('click', () => {
+function confirmRestart() {
   const running = state.groups.flatMap((group) => group.apps).filter(active).length;
-  if (!running) { void restartApp(); return; }
+  if (!running) { closeModal(); void restartApp(); return; }
   modal('앱 재시작', 'DEV LAUNCHER');
   $('modal-body').append(el('p', 'help', `실행 중인 서버 ${running}개를 종료한 뒤 런처를 다시 엽니다.`));
   submitButton('종료 후 재시작', async () => { closeModal(); await restartApp(); });
-});
+}
 
 let updateView = false, updateSignature = '', updateChecking = false, latestUpdate = null;
 function renderUpdateStatus(update) {

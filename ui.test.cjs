@@ -208,6 +208,7 @@ test('app restart shuts down managed servers before scheduling relaunch', { time
     app.relaunch = () => { let alive = true; try { process.kill(child, 0); } catch { alive = false; } fs.writeFileSync(marker, JSON.stringify({ alive })); };
   }, { marker, child });
   const closed = instance.waitForEvent('close');
+  await page.getByRole('button', { name: '앱 설정', exact: true }).click();
   await page.getByRole('button', { name: '앱 재시작', exact: true }).click();
   await expect(page.locator('#modal')).toContainText('실행 중인 서버 1개');
   await page.getByRole('button', { name: '종료 후 재시작', exact: true }).click();
@@ -262,7 +263,7 @@ test('one click checks immediately and waits for completion before offering down
   });
   const version = await page.locator('#update-summary').boundingBox();
   const control = await page.locator('#updates').boundingBox();
-  assert.ok(version.y < control.y);
+  assert.ok(version.x + version.width <= control.x && Math.abs(version.y + version.height / 2 - control.y - control.height / 2) < 4);
   await page.locator('#updates').click();
   await expect(page.locator('#modal-body')).toContainText('업데이트를 확인하고 있습니다.');
   await expect(page.locator('#modal-actions button')).toHaveCount(1);
@@ -509,4 +510,21 @@ test('closing the window with running servers asks first and keeps them when can
   await instance.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
   await closed;
   await expect.poll(() => { try { process.kill(child, 0); return true; } catch { return false; } }).toBe(false);
+});
+
+test('app settings hold tray mode and config tools outside the sidebar', { timeout: 40000 }, async t => {
+  const { page, errors } = await setup(t);
+  await expect(page.locator('.sidebar')).not.toContainText('메뉴 바 상주');
+  await page.getByRole('button', { name: '앱 설정', exact: true }).click();
+  await expect(page.getByRole('button', { name: '내보내기', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '가져오기', exact: true })).toBeVisible();
+  await page.getByLabel('메뉴 바 상주', { exact: true }).check();
+  await expect.poll(() => page.evaluate(() => window.launcher.list().then(value => value.trayMode))).toBe(true);
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await page.getByRole('button', { name: '앱 설정', exact: true }).click();
+  await expect(page.getByLabel('메뉴 바 상주', { exact: true })).toBeChecked();
+  await page.getByLabel('메뉴 바 상주', { exact: true }).uncheck();
+  await expect.poll(() => page.evaluate(() => window.launcher.list().then(value => value.trayMode))).toBe(false);
+  assert.deepEqual(errors, []);
 });
