@@ -791,3 +791,20 @@ test('groupLogs merges project logs in time order with names and hidden secrets'
   assert.ok(lines.every((line, i) => i === 0 || line.time >= lines[i - 1].time));
   assert.equal(lines[0].id, app.id);
 });
+test('running projects expose start time and process group resource usage', async t => {
+  const { engine, app, project } = await fixture(t, 'node server.cjs');
+  await fs.writeFile(path.join(project, 'server.cjs'), "require('child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' }); setInterval(()=>{},1000);");
+  assert.deepEqual(await engine.stats(), {});
+  const before = Date.now();
+  await engine.start(app.id, 'dev');
+  const listed = (await engine.list()).groups[0].apps[0];
+  assert.ok(listed.startedAt >= before && listed.startedAt <= Date.now());
+  await delay(500);
+  const usage = (await engine.stats())[app.id];
+  assert.ok(usage.processes >= 2, String(usage.processes));
+  assert.ok(usage.memory > 10 * 1024 * 1024, String(usage.memory));
+  assert.equal(typeof usage.cpu, 'number');
+  await engine.stop(app.id);
+  assert.equal((await engine.list()).groups[0].apps[0].startedAt, undefined);
+  assert.deepEqual(await engine.stats(), {});
+});

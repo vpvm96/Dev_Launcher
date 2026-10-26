@@ -93,6 +93,28 @@ async function refreshLogs() {
   else drawLogs(tail.lines);
 }
 
+// 카드의 가동 시간과 CPU·메모리 표시만 갱신한다. 목록 전체를 다시 그리지 않는다.
+const formatUptime = (ms) => {
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return '방금 시작';
+  return minutes < 60 ? `가동 ${minutes}분` : `가동 ${Math.floor(minutes / 60)}시간 ${minutes % 60}분`;
+};
+const formatMemory = (bytes) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)}GB` : `${Math.round(bytes / 1024 ** 2)}MB`);
+function drawUsage() {
+  for (const node of document.querySelectorAll('[data-usage]')) {
+    const usage = state.stats?.[node.dataset.usage];
+    const parts = [formatUptime(Date.now() - Number(node.dataset.startedAt))];
+    if (usage) parts.push(`CPU ${Math.round(usage.cpu)}%`, formatMemory(usage.memory));
+    node.textContent = parts.join(' · ');
+    node.title = usage ? `프로세스 ${usage.processes}개 합계` : '';
+  }
+}
+async function refreshStats() {
+  if (!document.querySelector('[data-usage]')) { state.stats = {}; return; }
+  state.stats = await api.stats();
+  drawUsage();
+}
+
 function counts() {
   persistSelection();
   const apps = currentGroup()?.apps || [];
@@ -175,6 +197,7 @@ function render() {
     $('apps').append(empty);
   }
   counts();
+  drawUsage();
   if (focusKey) [...document.querySelectorAll('[data-focus]')].find((node) => node.dataset.focus === focusKey)?.focus({ preventScroll: true });
 }
 
@@ -260,6 +283,12 @@ function renderApp(app, position, total) {
   const port = active(app) ? app.port : app.ports?.[mode(app)] || app.port;
   modeArea.append(select, el('span', 'port', port ? `:${port}` : '포트 자동 감지'));
   if (active(app) && app.mode && app.mode !== mode(app)) modeArea.append(el('span', '', `현재 ${upper(app.mode)} · 재시작 시 적용`));
+  if (app.startedAt) {
+    const usage = el('span', 'usage');
+    usage.dataset.usage = app.id;
+    usage.dataset.startedAt = String(app.startedAt);
+    modeArea.append(usage);
+  }
 
   const actions = el('div', 'actions');
   const items = [
@@ -951,7 +980,7 @@ $('group-logs').addEventListener('click', showGroupLogs);
 $('stop-all').addEventListener('click', () => { void Promise.all((currentGroup()?.apps || []).filter(active).map((app) => action(app, 'stop'))); });
 api.onChange(() => { void attempt(() => refresh()); });
 void attempt(() => refresh(true));
-setInterval(() => { void attempt(() => refresh()); }, 5000);
+setInterval(() => { void attempt(() => refresh()); void refreshStats().catch(() => {}); }, 5000);
 setInterval(() => { void attempt(() => refreshLogs()); }, 1000);
 
 $('auto-open').addEventListener('change', async () => {

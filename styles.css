@@ -97,3 +97,4 @@ select:disabled { opacity: .4; cursor: default; }
 .port-owner{display:flex;align-items:center;gap:14px}.port-owner .base-value{margin:0}
 .branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;color:var(--orange);background:#2a251c;border:1px solid #4a3e2c;border-radius:5px;padding:2px 7px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .log-time{color:#6f7c79}.log-source{font-weight:650}.source-0{color:#9ce7c3}.source-1{color:#8fb8ff}.source-2{color:#f6c989}.source-3{color:#e0a3ff}.source-4{color:#8fe3e8}.source-5{color:#ff9b9b}.log-tools select{min-width:140px;font-size:12px}
+.usage{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;color:var(--muted);white-space:nowrap}

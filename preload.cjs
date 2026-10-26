@@ -1,6 +1,6 @@
 // 화면에 필요한 프로젝트 관리 API만 격리된 브리지로 제공한다.
 const { contextBridge, ipcRenderer } = require('electron');
-const methods = ['list', 'updateStatus', 'checkUpdate', 'downloadUpdate', 'installUpdate', 'restartApp', 'setAutoOpen', 'setTrayMode', 'setReadyNotify', 'addGroup', 'removeGroup', 'renameGroup', 'moveGroup', 'placeGroup', 'chooseProject', 'relocateApp', 'choosePem', 'addApp', 'removeApp', 'renameApp', 'moveApp', 'placeApp', 'setAppOptions', 'addMode', 'removeMode', 'setEnvFile', 'env', 'saveEnv', 'start', 'stop', 'restart', 'waitReady', 'logs', 'logTail', 'previousLogs', 'groupLogs', 'portOwners', 'stopPortOwner', 'clearLogs', 'copyText', 'openApp', 'openIn', 'exportConfig', 'importConfig'];
+const methods = ['list', 'updateStatus', 'checkUpdate', 'downloadUpdate', 'installUpdate', 'restartApp', 'setAutoOpen', 'setTrayMode', 'setReadyNotify', 'addGroup', 'removeGroup', 'renameGroup', 'moveGroup', 'placeGroup', 'chooseProject', 'relocateApp', 'choosePem', 'addApp', 'removeApp', 'renameApp', 'moveApp', 'placeApp', 'setAppOptions', 'addMode', 'removeMode', 'setEnvFile', 'env', 'saveEnv', 'start', 'stop', 'restart', 'waitReady', 'logs', 'logTail', 'previousLogs', 'groupLogs', 'stats', 'portOwners', 'stopPortOwner', 'clearLogs', 'copyText', 'openApp', 'openIn', 'exportConfig', 'importConfig'];
 contextBridge.exposeInMainWorld('launcher', {
   ...Object.fromEntries(methods.map(name => [name, (...args) => ipcRenderer.invoke(name, ...args)])),
   onChange: callback => { ipcRenderer.on('changed', () => callback()); },

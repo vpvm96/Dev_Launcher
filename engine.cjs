@@ -234,7 +234,7 @@ class Engine {
   async list() {
     await this.ready;
     const facts = new Map(await Promise.all(this.config.groups.flatMap(g => g.apps).map(async a => [a.id, await isDirectory(a.path) ? { missing: false, branch: await gitBranch(a.path) } : { missing: true }])));
-    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, readyNotify: this.config.readyNotify === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, portConflict: r?.status === 'error' ? r.portConflict : undefined, ...facts.get(a.id) }; }) })) };
+    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, readyNotify: this.config.readyNotify === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, startedAt: r?.status === 'running' ? r.startedAt : undefined, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, portConflict: r?.status === 'error' ? r.portConflict : undefined, ...facts.get(a.id) }; }) })) };
   }
   async setReadyNotify(enabled) {
     await this.ready;
@@ -540,6 +540,7 @@ class Engine {
         if (crashed && !this.closing) this.handleCrash(id, app, r, mode);
       });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+      r.startedAt = Date.now();
       this.setStatus(r, 'running');
       void this.watchReady(id, r).catch(() => { if (!r.discardLogs) r.log.push('\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n'); });
       append(`\n[${new Date().toLocaleTimeString()}] ${mode.toUpperCase()} 실행\n`);
@@ -591,6 +592,21 @@ class Engine {
     process.kill(pid, 'SIGTERM');
     for (let i = 0; i < 30; i++) { if (!(await this.portOwners(port)).some(owner => owner.pid === pid)) return; await delay(100); }
     try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  }
+  // 실행 중인 프로젝트의 프로세스 그룹별 CPU·메모리 합계를 돌려줍니다. 서버가 띄운 자식 프로세스도 포함합니다.
+  async stats() {
+    const groups = new Map([...this.runtime].filter(([, r]) => r.child && r.pid).map(([id, r]) => [r.pid, id]));
+    if (!groups.size) return {};
+    const { stdout } = await run('/bin/ps', ['-A', '-o', 'pgid=,%cpu=,rss=']);
+    const result = {};
+    for (const line of stdout.split('\n')) {
+      const [pgid, cpu, rss] = line.trim().split(/\s+/).map(Number);
+      const id = groups.get(pgid);
+      if (!id) continue;
+      const usage = result[id] ||= { cpu: 0, memory: 0, processes: 0 };
+      usage.cpu += cpu; usage.memory += rss * 1024; usage.processes += 1;
+    }
+    return result;
   }
   // 그룹 안 프로젝트들의 로그를 시간순으로 합쳐 최근 limit줄을 돌려줍니다.
   groupLogs(groupId, limit = 3000) {

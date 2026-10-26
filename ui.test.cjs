@@ -630,3 +630,13 @@ test('group log dialog merges project output and filters by project', { timeout:
   await expect(page.locator('#group-log-output')).toContainText('hello from second');
   assert.deepEqual(errors, []);
 });
+
+test('running cards show uptime and resource usage', { timeout: 40000 }, async t => {
+  const { page, errors } = await setup(t);
+  await page.locator('#start-selected').click();
+  await expect(page.locator('.app-card .usage')).toHaveText('방금 시작');
+  await expect(page.locator('.app-card .usage')).toHaveText(/^방금 시작 · CPU \d+% · \d+MB$/, { timeout: 8000 });
+  await page.locator('#stop-all').click();
+  await expect(page.locator('.app-card .usage')).toHaveCount(0);
+  assert.deepEqual(errors, []);
+});
