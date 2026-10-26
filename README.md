@@ -34,6 +34,8 @@
 
 ## Node 버전
 
+Finder에서 앱을 열어도 터미널과 같은 환경을 쓰도록 시작할 때 로그인 셸(`.zprofile`, `.zshrc`)의 환경변수를 읽어 옵니다. nvm·SDKMAN·`JAVA_HOME` 설정을 `.zshrc`에 둔 경우에도 그대로 적용됩니다.
+
 프로젝트에 `.nvmrc` 또는 `.node-version`이 있으면 nvm(`~/.nvm`) 또는 fnm(`~/.local/share/fnm`, `~/Library/Application Support/fnm`)에 설치된 해당 버전을 찾아 우선 사용하고 로그에 안내합니다. `20`처럼 메이저만 지정하면 설치된 가장 높은 버전을 사용합니다. 설치된 버전이 없거나 `lts/*` 같은 별칭이면 기본 Node를 사용하고 로그에 알립니다.
 
 ## 설정 내보내기와 가져오기

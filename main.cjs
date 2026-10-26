@@ -7,6 +7,7 @@ const { execFileSync, execFile } = require('node:child_process');
 const { Engine } = require('./engine.cjs');
 const { autoUpdater } = require('electron-updater');
 const { createUpdater } = require('./updater.cjs');
+const { readShellEnv } = require('./shell-env.cjs');
 let engine, window, tray = null, quitting = false, restarting = false;
 const page = pathToFileURL(path.join(__dirname, 'index.html')).href;
 app.setName('Dev Launcher');
@@ -80,10 +81,12 @@ else {
   app.on('second-instance', showWindow);
   app.on('activate', showWindow);
   app.whenReady().then(async () => {
-    // Finder 실행에서도 사용자가 설치한 Node와 패키지 매니저를 찾는다.
-    try {
-      process.env.PATH = execFileSync('/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 5000 }).trim();
-    } catch { /* 현재 프로세스의 PATH를 유지한다. */ }
+    // Finder 실행에서도 .zshrc의 nvm·SDKMAN·JAVA_HOME 같은 설정을 쓰도록 사용자 셸 환경을 가져온다.
+    try { Object.assign(process.env, readShellEnv()); }
+    catch {
+      try { process.env.PATH = execFileSync('/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 5000 }).trim(); }
+      catch { /* 현재 프로세스의 PATH를 유지한다. */ }
+    }
     const notifyChange = () => { if (window && !window.isDestroyed()) window.webContents.send('changed'); };
     engine = new Engine({
       dataDir: process.env.DEV_LAUNCHER_DATA_DIR || app.getPath('userData'),
