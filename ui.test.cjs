@@ -526,6 +526,9 @@ test('app settings hold tray mode and config tools outside the sidebar', { timeo
   await expect(page.getByLabel('메뉴 바 상주', { exact: true })).toBeChecked();
   await page.getByLabel('메뉴 바 상주', { exact: true }).uncheck();
   await expect.poll(() => page.evaluate(() => window.launcher.list().then(value => value.trayMode))).toBe(false);
+  await expect(page.getByLabel('준비 완료 알림', { exact: true })).not.toBeChecked();
+  await page.getByLabel('준비 완료 알림', { exact: true }).check();
+  await expect.poll(() => page.evaluate(() => window.launcher.list().then(value => value.readyNotify))).toBe(true);
   assert.deepEqual(errors, []);
 });
 

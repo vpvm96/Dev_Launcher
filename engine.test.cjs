@@ -732,3 +732,22 @@ test('list reports the git branch for repositories, worktrees and detached heads
   await fs.writeFile(path.join(project, '.git'), 'gitdir: ../worktree-git\n');
   assert.equal(await branchOf(), '0123456');
 });
+test('ready notifications are opt-in and fire once the port opens', async t => {
+  const listener = net.createServer(); await new Promise(r => listener.listen(0, r));
+  const port = listener.address().port; await new Promise(r => listener.close(r));
+  const notes = [];
+  const { engine, app, project, dataDir } = await fixture(t, `PORT=${port} node server.cjs`, { notify: note => notes.push(note) });
+  await fs.writeFile(path.join(project, 'server.cjs'), "require('http').createServer((q,s)=>s.end('ok')).listen(Number(process.env.PORT));");
+  assert.equal((await engine.list()).readyNotify, false);
+  await engine.start(app.id, 'dev');
+  await engine.waitReady(app.id);
+  await delay(100);
+  assert.deepEqual(notes, []);
+  await engine.setReadyNotify(true);
+  assert.equal((await new Engine({ dataDir }).list()).readyNotify, true);
+  await engine.restart(app.id, 'dev');
+  await engine.waitReady(app.id);
+  for (let i = 0; i < 20 && !notes.length; i++) await delay(25);
+  assert.deepEqual(notes, [{ title: `${app.name} 준비됨`, body: `http://localhost:${port}에서 접속할 수 있습니다.` }]);
+  await assert.rejects(engine.setReadyNotify('yes'), /준비 완료 알림 설정이 올바르지 않습니다/);
+});

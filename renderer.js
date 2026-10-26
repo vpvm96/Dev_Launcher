@@ -63,6 +63,7 @@ async function refresh(force = false) {
     renderUpdateStatus(update);
     if (!$('auto-open').disabled) $('auto-open').checked = data.autoOpen;
     state.trayMode = data.trayMode;
+    state.readyNotify = data.readyNotify;
     state.groups = data.groups;
     if (!currentGroup()) state.group = state.groups[0]?.id || null;
     for (const group of state.groups) for (const app of group.apps) {
@@ -902,7 +903,7 @@ $('auto-open').addEventListener('change', async () => {
 function openAppSettings() {
   modal('앱 설정', 'DEV LAUNCHER');
   const general = el('section', 'option-section');
-  general.append(el('h3', '', '실행 유지'));
+  general.append(el('h3', '', '실행과 알림'));
   const tray = checkField('메뉴 바 상주', state.trayMode === true, '창을 닫아도 서버를 유지하고, 메뉴 바 아이콘에서 실행 상태 확인과 실행·종료·열기를 할 수 있습니다.');
   tray.input.addEventListener('change', async () => {
     tray.input.disabled = true;
@@ -913,7 +914,17 @@ function openAppSettings() {
     } catch (error) { tray.input.checked = !tray.input.checked; toast(error.message, true); }
     finally { tray.input.disabled = false; }
   });
-  general.append(tray.wrapper);
+  const notify = checkField('준비 완료 알림', state.readyNotify === true, '서버 포트가 열리면 macOS 알림을 보냅니다. 빌드가 오래 걸리는 프로젝트에 유용합니다.');
+  notify.input.addEventListener('change', async () => {
+    notify.input.disabled = true;
+    try {
+      await api.setReadyNotify(notify.input.checked);
+      state.readyNotify = notify.input.checked;
+      toast(notify.input.checked ? '서버가 준비되면 알림을 보냅니다.' : '준비 완료 알림을 껐어요.');
+    } catch (error) { notify.input.checked = !notify.input.checked; toast(error.message, true); }
+    finally { notify.input.disabled = false; }
+  });
+  general.append(tray.wrapper, notify.wrapper);
 
   const config = el('section', 'option-section');
   config.append(el('h3', '', '설정 파일'));

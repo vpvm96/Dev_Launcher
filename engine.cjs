@@ -209,7 +209,12 @@ class Engine {
   async list() {
     await this.ready;
     const facts = new Map(await Promise.all(this.config.groups.flatMap(g => g.apps).map(async a => [a.id, await isDirectory(a.path) ? { missing: false, branch: await gitBranch(a.path) } : { missing: true }])));
-    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, portConflict: r?.status === 'error' ? r.portConflict : undefined, ...facts.get(a.id) }; }) })) };
+    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, readyNotify: this.config.readyNotify === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, portConflict: r?.status === 'error' ? r.portConflict : undefined, ...facts.get(a.id) }; }) })) };
+  }
+  async setReadyNotify(enabled) {
+    await this.ready;
+    if (typeof enabled !== 'boolean') throw new Error('준비 완료 알림 설정이 올바르지 않습니다.');
+    this.config.readyNotify = enabled; await this.persist();
   }
   async setTrayMode(enabled) {
     await this.ready;
@@ -339,6 +344,9 @@ class Engine {
       if (!alive()) return;
       if (listening) {
         runtime.ready = true; this.changed();
+        if (this.config.readyNotify === true) {
+          try { this.notify?.({ title: `${this.app(id).name} 준비됨`, body: `http://localhost:${runtime.port}에서 접속할 수 있습니다.` }); } catch { /* 알림 실패는 실행에 영향을 주지 않습니다. */ }
+        }
         if (autoOpen() && Date.now() - started <= 120000) await this.openBrowser(`http://localhost:${runtime.port}`);
         return;
       }

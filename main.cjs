@@ -114,7 +114,7 @@ else {
       if (event.sender !== window?.webContents || event.senderFrame.url !== page) throw new Error('허용되지 않은 요청입니다.');
       return fn(...args);
     });
-    for (const method of ['list', 'setAutoOpen', 'setTrayMode', 'addGroup', 'removeGroup', 'renameGroup', 'moveGroup', 'placeGroup', 'addApp', 'removeApp', 'renameApp', 'moveApp', 'placeApp', 'setAppOptions', 'addMode', 'removeMode', 'setEnvFile', 'env', 'saveEnv', 'start', 'stop', 'restart', 'waitReady', 'logs', 'logTail', 'previousLogs', 'portOwners', 'stopPortOwner', 'clearLogs']) {
+    for (const method of ['list', 'setAutoOpen', 'setTrayMode', 'setReadyNotify', 'addGroup', 'removeGroup', 'renameGroup', 'moveGroup', 'placeGroup', 'addApp', 'removeApp', 'renameApp', 'moveApp', 'placeApp', 'setAppOptions', 'addMode', 'removeMode', 'setEnvFile', 'env', 'saveEnv', 'start', 'stop', 'restart', 'waitReady', 'logs', 'logTail', 'previousLogs', 'portOwners', 'stopPortOwner', 'clearLogs']) {
       handle(method, (...args) => engine[method](...args));
     }
     handle('updateStatus', () => updates.status());
