@@ -567,3 +567,20 @@ test('log dialog shows the previous run after a restart', { timeout: 40000 }, as
   await expect(page.locator('#log-output')).not.toContainText(`run ${first}`);
   assert.deepEqual(errors, []);
 });
+
+test('port conflicts show the owning process and stopping it lets the project start', { timeout: 40000 }, async t => {
+  const { spawn } = require('node:child_process');
+  const { page, project, errors } = await setup(t);
+  const port = JSON.parse(await fs.readFile(path.join(project, '../data/config.json'), 'utf8')).groups[0].apps[0].port;
+  const holder = spawn(process.execPath, ['-e', `require('net').createServer().listen(${port},()=>console.log('ready'));setInterval(()=>{},1000)`], { stdio: ['ignore', 'pipe', 'ignore'] });
+  t.after(() => { try { holder.kill('SIGKILL'); } catch {} });
+  await new Promise(resolve => holder.stdout.once('data', resolve));
+  await page.getByRole('button', { name: '실행', exact: true }).click();
+  await page.getByRole('button', { name: '포트 사용 프로세스 보기', exact: true }).click();
+  await expect(page.locator('#modal-body')).toContainText(`PID ${holder.pid}`);
+  await page.locator('.port-owner').filter({ hasText: `PID ${holder.pid}` }).getByRole('button', { name: '종료', exact: true }).click();
+  await expect(page.locator('#modal-body')).toContainText('사용하는 프로세스가 없습니다');
+  await page.getByRole('button', { name: 'user 실행', exact: true }).click();
+  await expect(page.locator('.app-card .status')).toHaveText('준비됨');
+  assert.deepEqual(errors, []);
+});

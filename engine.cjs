@@ -4,7 +4,9 @@ const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
 const { randomUUID } = require('node:crypto');
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const run = promisify(execFile);
 const { parse } = require('dotenv');
 const { SshTunnel, validateTunnel } = require('./ssh-tunnel.cjs');
 const { LogBuffer } = require('./log-buffer.cjs');
@@ -188,7 +190,7 @@ class Engine {
   async list() {
     await this.ready;
     const missing = new Map(await Promise.all(this.config.groups.flatMap(g => g.apps).map(async a => [a.id, !await isDirectory(a.path)])));
-    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, missing: missing.get(a.id) }; }) })) };
+    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, portConflict: r?.status === 'error' ? r.portConflict : undefined, missing: missing.get(a.id) }; }) })) };
   }
   async setTrayMode(enabled) {
     await this.ready;
@@ -440,7 +442,7 @@ class Engine {
       r.port = manual || pkg.type === 'node' || pkg.type === 'shell' ? Number(explicitPort) || Number(merged.PORT) || Number(merged.SERVER_PORT) || parsed.port || undefined : Number(merged.SERVER_PORT) || await springPort(app.path);
       if (r.port) {
         for (const [otherId, other] of this.runtime) if (otherId !== id && other.child && other.port === r.port) throw new Error(`${r.port} 포트를 다른 프로젝트가 사용 중입니다.`);
-        await new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', () => reject(new Error(`${r.port} 포트가 사용 중입니다. 기존 서버를 종료해 주세요.`))); server.listen(r.port, () => server.close(resolve)); });
+        await new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', () => { r.portConflict = r.port; reject(new Error(`${r.port} 포트가 사용 중입니다. 기존 서버를 종료해 주세요.`)); }); server.listen(r.port, () => server.close(resolve)); });
       }
       if (values.tunnel?.enabled) {
         r.tunnel = new SshTunnel(values.tunnel, { ...this.tunnelOptions, onFailure: error => {
@@ -511,6 +513,32 @@ class Engine {
     kill('SIGTERM');
     for (let i = 0; i < 30; i++) { try { process.kill(-pid, 0); } catch { return; } await delay(100); }
     kill('SIGKILL');
+  }
+  // 포트를 점유한 프로세스를 lsof로 찾습니다. 결과가 없으면 lsof가 1로 종료합니다.
+  async portOwners(port) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('포트 번호가 올바르지 않습니다.');
+    let output;
+    try { ({ stdout: output } = await run('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fpc'])); }
+    catch (error) { if (error.code === 1) return []; throw new Error('포트를 사용하는 프로세스를 확인할 수 없습니다.'); }
+    const owners = new Map();
+    let current;
+    for (const line of output.split('\n')) {
+      if (line.startsWith('p')) { current = Number(line.slice(1)); owners.set(current, { pid: current, name: '', command: '' }); }
+      else if (line.startsWith('c') && owners.has(current)) owners.get(current).name = line.slice(1);
+    }
+    if (!owners.size) return [];
+    try {
+      const { stdout } = await run('/bin/ps', ['-o', 'pid=,command=', '-p', [...owners.keys()].join(',')]);
+      for (const line of stdout.split('\n')) { const match = line.match(/^\s*(\d+)\s+(.*)$/); if (match && owners.has(Number(match[1]))) owners.get(Number(match[1])).command = match[2]; }
+    } catch { /* 전체 명령을 못 읽어도 프로세스 이름은 보여 줍니다. */ }
+    return [...owners.values()].map(owner => ({ ...owner, command: owner.command || owner.name }));
+  }
+  // 지금 이 포트를 점유한 프로세스만 종료합니다. 3초 안에 끝나지 않으면 강제로 종료합니다.
+  async stopPortOwner(port, pid) {
+    if (!(await this.portOwners(port)).some(owner => owner.pid === pid)) throw new Error('이 포트를 사용하는 프로세스가 아닙니다.');
+    process.kill(pid, 'SIGTERM');
+    for (let i = 0; i < 30; i++) { if (!(await this.portOwners(port)).some(owner => owner.pid === pid)) return; await delay(100); }
+    try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
   }
   // 종료·재시작으로 로그를 비우기 전에 직전 실행 로그로 보관합니다. 비밀값은 보관 시점에 가립니다.
   archiveLog(id, r) {

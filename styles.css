@@ -94,3 +94,4 @@ select:disabled { opacity: .4; cursor: default; }
 
 /* 드래그로 순서 바꾸기 */
 .drag-handle{cursor:grab;color:var(--muted);font-size:16px;line-height:1;padding:4px 2px;margin-left:-8px;user-select:none}.drag-handle:active{cursor:grabbing}.dragging{opacity:.45}.app-card.drop-before,.group-button.drop-before{box-shadow:0 -2px 0 var(--mint)}.app-card.drop-after,.group-button.drop-after{box-shadow:0 2px 0 var(--mint)}
+.port-owner{display:flex;align-items:center;gap:14px}.port-owner .base-value{margin:0}

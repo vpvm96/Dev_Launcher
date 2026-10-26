@@ -702,3 +702,21 @@ test('stopping or restarting keeps the previous run log separately with secrets 
   await engine.removeApp(app.id);
   assert.equal(engine.previousLogs(app.id), null);
 });
+test('port conflicts report the owning process and can stop it', async t => {
+  const { spawn } = require('node:child_process');
+  const holder = spawn(process.execPath, ['-e', "const s=require('net').createServer().listen(0,()=>console.log(s.address().port));setInterval(()=>{},1000)"], { stdio: ['ignore', 'pipe', 'ignore'] });
+  t.after(() => { try { holder.kill('SIGKILL'); } catch {} });
+  const port = Number(await new Promise(resolve => holder.stdout.once('data', data => resolve(String(data).trim()))));
+  const { engine, app } = await fixture(t, `PORT=${port} node server.cjs`);
+  await assert.rejects(engine.start(app.id, 'dev'), /포트가 사용 중/);
+  assert.equal((await engine.list()).groups[0].apps[0].portConflict, port);
+  const owners = await engine.portOwners(port);
+  const owner = owners.find(item => item.pid === holder.pid);
+  assert.ok(owner, JSON.stringify(owners));
+  assert.match(owner.command, /node/);
+  await assert.rejects(engine.stopPortOwner(port, process.pid), /이 포트를 사용하는 프로세스가 아닙니다/);
+  await engine.stopPortOwner(port, holder.pid);
+  assert.deepEqual(await engine.portOwners(port), []);
+  await engine.start(app.id, 'dev');
+  assert.equal((await engine.list()).groups[0].apps[0].portConflict, undefined);
+});

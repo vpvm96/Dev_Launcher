@@ -283,9 +283,37 @@ function renderApp(app, position, total) {
   } else if (app.error) {
     const error = el('p', 'inline-error', app.error);
     error.setAttribute('role', 'status');
-    card.append(error);
+    if (app.portConflict) {
+      const row = el('div', 'missing-folder');
+      row.append(error, button('포트 사용 프로세스 보기', () => attempt(() => showPortOwners(app, app.portConflict))));
+      card.append(row);
+    } else card.append(error);
   }
   return card;
+}
+
+// 포트를 점유한 프로세스를 보여 주고, 사용자가 고른 프로세스만 종료한다.
+async function showPortOwners(app, port) {
+  modal(`${port} 포트 사용 중`, 'PORT CONFLICT');
+  const owners = await api.portOwners(port);
+  if (!$('modal').open) return;
+  if (!owners.length) {
+    $('modal-body').append(el('p', '', '지금은 이 포트를 사용하는 프로세스가 없습니다.'));
+    submitButton(`${app.name} 실행`, async () => { closeModal(); await action(app, 'start'); });
+    return;
+  }
+  $('modal-body').append(el('p', 'help', '런처 밖에서 실행된 프로세스입니다. 종료하면 해당 프로그램의 저장하지 않은 작업이 사라질 수 있습니다.'));
+  for (const owner of owners) {
+    const row = el('div', 'env-row port-owner');
+    const info = el('div', 'app-info');
+    info.append(el('strong', 'env-key', `${owner.name} · PID ${owner.pid}`), el('div', 'base-value', owner.command));
+    row.append(info, button('종료', () => attempt(async () => {
+      await api.stopPortOwner(port, owner.pid);
+      toast(`${owner.name}(PID ${owner.pid})을(를) 종료했어요.`);
+      await showPortOwners(app, port);
+    }), 'danger'));
+    $('modal-body').append(row);
+  }
 }
 
 async function action(app, command) {
