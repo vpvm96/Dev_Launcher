@@ -64,7 +64,9 @@ async function refreshTray() {
   const apps = state.groups.flatMap(g => g.apps.map(a => ({ ...a, group: g.name })));
   const running = apps.filter(a => ['running', 'launching'].includes(a.status));
   if (!tray) {
-    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'assets/icon.png')).resize({ width: 18, height: 18 }));
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'assets/trayTemplate.png'));
+    icon.setTemplateImage(true);
+    tray = new Tray(icon);
     tray.on('click', showWindow);
   }
   tray.setToolTip(`Dev Launcher · ${running.length}개 실행 중`);

@@ -18,3 +18,14 @@ for size in (16, 32, 128, 256, 512):
         name = f'icon_{size}x{size}' + ('@2x' if scale == 2 else '') + '.png'
         image.resize((size*scale, size*scale), Image.Resampling.LANCZOS).save(iconset/name)
 image.resize((256,256), Image.Resampling.LANCZOS).save(root/'icon.png')
+
+# 메뉴 바용 단색 템플릿 아이콘. 파일 이름이 Template으로 끝나면 macOS가 메뉴 바 색에 맞춰 칠한다.
+for scale, suffix in ((1, ''), (2, '@2x')):
+    size = 18 * scale
+    big = Image.new('RGBA', (size * 8, size * 8), (0, 0, 0, 0))
+    pen = ImageDraw.Draw(big)
+    unit = scale * 8
+    pen.rounded_rectangle((1.5*unit, 2.5*unit, 16.5*unit, 15.5*unit), radius=3*unit, outline='black', width=round(1.6*unit))
+    pen.line([(5*unit, 6.5*unit), (8*unit, 9*unit), (5*unit, 11.5*unit)], fill='black', width=round(1.7*unit), joint='curve')
+    pen.line([(9.5*unit, 12*unit), (13*unit, 12*unit)], fill='black', width=round(1.7*unit))
+    big.resize((size, size), Image.Resampling.LANCZOS).save(root / f'trayTemplate{suffix}.png')

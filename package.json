@@ -46,6 +46,8 @@
       "renderer.js",
       "styles.css",
       "assets/icon.png",
+      "assets/trayTemplate.png",
+      "assets/trayTemplate@2x.png",
       "package.json"
     ],
     "forceCodeSigning": true,
