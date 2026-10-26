@@ -127,7 +127,7 @@ function render() {
     const empty = el('div', 'empty');
     empty.append(
       el('h2', '', group ? '프로젝트를 연결해 주세요.' : '작업을 그룹으로 모아보세요.'),
-      el('p', '', group ? '프로젝트 폴더를 선택하면 실행 명령과 환경 파일을 찾아드려요.' : 'Dearmonday, Powderroom처럼 함께 켤 프로젝트를 묶어주세요.'),
+      el('p', '', group ? '프로젝트 폴더를 선택하면 실행 명령과 환경 파일을 찾아드려요.' : '프론트엔드와 백엔드처럼 함께 켤 프로젝트를 묶어주세요.'),
       button(group ? '＋ 프로젝트 폴더 선택' : '＋ 첫 그룹 만들기', group ? addApp : addGroup, 'primary'),
     );
     $('apps').append(empty);
@@ -322,7 +322,7 @@ function onEnter(input, handler) {
 
 function addGroup() {
   modal('새 프로젝트 그룹');
-  const name = field('그룹 이름', '', '예. Powderroom');
+  const name = field('그룹 이름', '', '예. 쇼핑몰 서비스');
   $('modal-body').append(name.wrapper);
   const save = submitButton('그룹 만들기', async () => {
     if (!name.input.value.trim()) { name.input.focus(); return; }
