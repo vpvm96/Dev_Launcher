@@ -528,3 +528,20 @@ test('app settings hold tray mode and config tools outside the sidebar', { timeo
   await expect.poll(() => page.evaluate(() => window.launcher.list().then(value => value.trayMode))).toBe(false);
   assert.deepEqual(errors, []);
 });
+
+test('projects and groups reorder by dragging', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  const second = path.join(project, '../second'); await fs.mkdir(second);
+  await fs.writeFile(path.join(second, 'package.json'), JSON.stringify({ scripts: { dev: 'node -e "setInterval(()=>{},1000)"' } }));
+  await page.evaluate(async (dir) => { await window.launcher.addApp('test-group', { path: dir, name: 'second' }); await window.launcher.addGroup('Other'); }, second);
+  await page.reload();
+  await expect(page.locator('.app-card')).toHaveCount(2);
+  const cards = page.locator('.app-card');
+  await cards.nth(1).locator('.drag-handle').dragTo(cards.nth(0), { targetPosition: { x: 40, y: 5 } });
+  await expect(page.locator('.app-card .app-name')).toContainText(['second', 'user']);
+  await page.locator('.group-button').nth(1).dragTo(page.locator('.group-button').nth(0), { targetPosition: { x: 20, y: 3 } });
+  await expect(page.locator('.group-button')).toContainText(['Other', 'Test Workspace']);
+  const groups = await page.evaluate(() => window.launcher.list().then(value => value.groups.map(group => [group.name, group.apps.map(app => app.name)])));
+  assert.deepEqual(groups, [['Other', []], ['Test Workspace', ['second', 'user']]]);
+  assert.deepEqual(errors, []);
+});

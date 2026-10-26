@@ -214,6 +214,19 @@ class Engine {
     if (to < 0 || to >= list.length) return;
     [list[from], list[to]] = [list[to], list[from]]; await this.persist();
   }
+  // 드래그로 옮길 때 사용합니다. index는 옮긴 뒤의 위치입니다.
+  async placeGroup(id, index) {
+    await this.ready; const group = this.group(id);
+    await this.place(this.config.groups, group, index);
+  }
+  async placeApp(id, index) {
+    await this.ready; const app = this.app(id);
+    await this.place(this.config.groups.find(g => g.apps.includes(app)).apps, app, index);
+  }
+  async place(list, item, index) {
+    if (!Number.isInteger(index) || index < 0 || index >= list.length) throw new Error('이동할 위치가 올바르지 않습니다.');
+    list.splice(list.indexOf(item), 1); list.splice(index, 0, item); await this.persist();
+  }
   async setAppOptions(id, options) {
     await this.ready; const app = this.app(id);
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error('프로젝트 옵션 형식이 올바르지 않습니다.');

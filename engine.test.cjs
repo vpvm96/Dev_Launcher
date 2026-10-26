@@ -662,3 +662,22 @@ test('running projects report ready only after their port accepts connections', 
   await engine.stop(app.id);
   assert.equal((await engine.list()).groups[0].apps[0].ready, false);
 });
+test('projects and groups can be placed at any position for drag reordering', async t => {
+  const { engine, app, root, dataDir } = await fixture(t);
+  const ids = [app.id];
+  for (const name of ['b', 'c']) {
+    const dir = path.join(root, name); await fs.mkdir(dir);
+    await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ scripts: { dev: 'node -e "setInterval(()=>{},1000)"' } }));
+    ids.push((await engine.addApp(engine.config.groups[0].id, { path: dir })).id);
+  }
+  await engine.placeApp(ids[0], 2);
+  assert.deepEqual(engine.config.groups[0].apps.map(a => a.id), [ids[1], ids[2], ids[0]]);
+  await engine.placeApp(ids[0], 0);
+  assert.deepEqual(engine.config.groups[0].apps.map(a => a.id), ids);
+  await assert.rejects(engine.placeApp(ids[0], 3), /위치가 올바르지 않습니다/);
+  const second = await engine.addGroup('Second'), third = await engine.addGroup('Third');
+  await engine.placeGroup(third.id, 0);
+  assert.deepEqual(engine.config.groups.map(g => g.name), ['Third', 'Test', 'Second']);
+  await assert.rejects(engine.placeGroup(second.id, -1), /위치가 올바르지 않습니다/);
+  assert.deepEqual((await new Engine({ dataDir }).list()).groups.map(g => g.name), ['Third', 'Test', 'Second']);
+});

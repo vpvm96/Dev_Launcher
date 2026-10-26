@@ -100,12 +100,51 @@ function counts() {
   $('stop-all').disabled = !apps.some(active);
 }
 
+// 핸들을 끌어 같은 목록 안에서 순서를 바꾼다. 놓은 위치가 항목의 위쪽 절반이면 앞에, 아래쪽이면 뒤에 넣는다.
+function sortable(node, handle, kind, id, position, place) {
+  handle.draggable = true;
+  const after = (event) => { const rect = node.getBoundingClientRect(); return event.clientY > rect.top + rect.height / 2; };
+  const unmark = () => node.classList.remove('drop-before', 'drop-after');
+  const accepts = () => state.drag?.kind === kind && state.drag.id !== id;
+  handle.addEventListener('dragstart', (event) => {
+    state.drag = { kind, id, position };
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+    node.classList.add('dragging');
+  });
+  handle.addEventListener('dragend', () => {
+    state.drag = null;
+    node.classList.remove('dragging');
+    if (state.renderPending) { state.renderPending = false; render(); }
+  });
+  node.addEventListener('dragover', (event) => {
+    if (!accepts()) return;
+    event.preventDefault();
+    node.classList.toggle('drop-before', !after(event));
+    node.classList.toggle('drop-after', after(event));
+  });
+  node.addEventListener('dragleave', unmark);
+  node.addEventListener('drop', (event) => {
+    if (!accepts()) return;
+    event.preventDefault();
+    unmark();
+    const from = state.drag.position, dragged = state.drag.id;
+    let to = position + (after(event) ? 1 : 0);
+    if (from < to) to -= 1;
+    if (to !== from) void attempt(async () => { await place(dragged, to); await refresh(true); });
+  });
+}
+
 function render() {
+  // 끌고 있는 동안 목록을 다시 그리면 드래그가 끊기므로 끝난 뒤에 그린다.
+  if (state.drag) { state.renderPending = true; return; }
   const focusKey = document.activeElement?.dataset.focus;
-  $('groups').replaceChildren(...state.groups.map((group) => {
+  $('groups').replaceChildren(...state.groups.map((group, position) => {
     const node = button('', () => { state.group = group.id; render(); }, `group-button${group.id === state.group ? ' active' : ''}`);
     node.append(el('span', '', group.name), el('span', '', String(group.apps.length)));
     node.setAttribute('aria-current', group.id === state.group ? 'page' : 'false');
+    node.title = '끌어서 순서를 바꿀 수 있습니다.';
+    sortable(node, node, 'group', group.id, position, (id, index) => api.placeGroup(id, index));
     return node;
   }));
   const group = currentGroup();
@@ -196,7 +235,11 @@ function renderApp(app, position, total) {
   down.setAttribute('aria-label', `${app.name} 아래로 이동`);
   down.disabled = position >= total - 1;
   order.append(up, down);
-  top.append(check, el('div', 'app-icon', app.name.slice(0, 1).toUpperCase()), info, status, order);
+  const handle = el('span', 'drag-handle', '⠿');
+  handle.title = '끌어서 순서 변경';
+  handle.setAttribute('aria-hidden', 'true');
+  sortable(card, handle, 'app', app.id, position, (id, index) => api.placeApp(id, index));
+  top.append(handle, check, el('div', 'app-icon', app.name.slice(0, 1).toUpperCase()), info, status, order);
 
   const bottom = el('div', 'card-bottom');
   const modeArea = el('div', 'mode-area');

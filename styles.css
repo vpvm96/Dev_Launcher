@@ -91,3 +91,6 @@ select:disabled { opacity: .4; cursor: default; }
 /* 사이드바 하단 버전 표시와 앱 설정 */
 .version-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}.sidebar-footer .version-row small{margin:0}#updates{font-size:11px;min-height:30px;padding:5px 10px}#app-settings{width:100%;margin-bottom:16px}.local-note{display:flex;align-items:center;gap:4px}
 .option-section>button{margin-top:12px}
+
+/* 드래그로 순서 바꾸기 */
+.drag-handle{cursor:grab;color:var(--muted);font-size:16px;line-height:1;padding:4px 2px;margin-left:-8px;user-select:none}.drag-handle:active{cursor:grabbing}.dragging{opacity:.45}.app-card.drop-before,.group-button.drop-before{box-shadow:0 -2px 0 var(--mint)}.app-card.drop-after,.group-button.drop-after{box-shadow:0 2px 0 var(--mint)}
