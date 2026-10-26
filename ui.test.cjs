@@ -597,3 +597,12 @@ test('API address picker offers ports of other projects in the same group', { ti
   await expect(page.locator('.env-row').filter({ hasText: 'API_URL' }).getByRole('checkbox')).toBeChecked();
   assert.deepEqual(errors, []);
 });
+
+test('cards show the current git branch', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await fs.mkdir(path.join(project, '.git'));
+  await fs.writeFile(path.join(project, '.git/HEAD'), 'ref: refs/heads/feat/checkout\n');
+  await page.reload();
+  await expect(page.locator('.app-card .branch')).toHaveText('⎇ feat/checkout');
+  assert.deepEqual(errors, []);
+});

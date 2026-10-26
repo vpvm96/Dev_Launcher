@@ -720,3 +720,15 @@ test('port conflicts report the owning process and can stop it', async t => {
   await engine.start(app.id, 'dev');
   assert.equal((await engine.list()).groups[0].apps[0].portConflict, undefined);
 });
+test('list reports the git branch for repositories, worktrees and detached heads', async t => {
+  const { engine, project, root } = await fixture(t, 'node server.cjs');
+  const branchOf = async () => (await engine.list()).groups[0].apps[0].branch;
+  assert.equal(await branchOf(), undefined);
+  await fs.mkdir(path.join(root, '.git'));
+  await fs.writeFile(path.join(root, '.git/HEAD'), 'ref: refs/heads/feature/login\n');
+  assert.equal(await branchOf(), 'feature/login');
+  await fs.mkdir(path.join(root, 'worktree-git'));
+  await fs.writeFile(path.join(root, 'worktree-git/HEAD'), '0123456789abcdef0123456789abcdef01234567\n');
+  await fs.writeFile(path.join(project, '.git'), 'gitdir: ../worktree-git\n');
+  assert.equal(await branchOf(), '0123456');
+});

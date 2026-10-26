@@ -109,6 +109,25 @@ async function resolveNodeBin(directory, roots = defaultNodeRoots()) {
   }
   return { ...request, bin: best?.bin || null };
 }
+// 상위 폴더로 올라가며 .git을 찾고 HEAD에서 브랜치 이름을 읽습니다. 워크트리의 .git 파일과 detached HEAD도 처리합니다.
+async function gitBranch(directory) {
+  for (let dir = directory; ; dir = path.dirname(dir)) {
+    const marker = path.join(dir, '.git');
+    let gitDir = null;
+    try {
+      const stat = await fs.stat(marker);
+      if (stat.isDirectory()) gitDir = marker;
+      else { const target = (await fs.readFile(marker, 'utf8')).match(/^gitdir:\s*(.+)$/m)?.[1]?.trim(); if (target) gitDir = path.resolve(dir, target); }
+    } catch { /* 이 폴더에는 .git이 없습니다. */ }
+    if (gitDir) {
+      try {
+        const head = (await fs.readFile(path.join(gitDir, 'HEAD'), 'utf8')).trim();
+        return head.match(/^ref:\s*refs\/heads\/(.+)$/)?.[1] || (/^[0-9a-f]{40,64}$/.test(head) ? head.slice(0, 7) : undefined);
+      } catch { return undefined; }
+    }
+    if (dir === path.dirname(dir)) return undefined;
+  }
+}
 async function isDirectory(directory) {
   try { return (await fs.stat(directory)).isDirectory(); } catch { return false; }
 }
@@ -189,8 +208,8 @@ class Engine {
   serial(id, fn) { const next = (this.queues.get(id) || Promise.resolve()).catch(() => {}).then(fn); this.queues.set(id, next); return next; }
   async list() {
     await this.ready;
-    const missing = new Map(await Promise.all(this.config.groups.flatMap(g => g.apps).map(async a => [a.id, !await isDirectory(a.path)])));
-    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, portConflict: r?.status === 'error' ? r.portConflict : undefined, missing: missing.get(a.id) }; }) })) };
+    const facts = new Map(await Promise.all(this.config.groups.flatMap(g => g.apps).map(async a => [a.id, await isDirectory(a.path) ? { missing: false, branch: await gitBranch(a.path) } : { missing: true }])));
+    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, portConflict: r?.status === 'error' ? r.portConflict : undefined, ...facts.get(a.id) }; }) })) };
   }
   async setTrayMode(enabled) {
     await this.ready;

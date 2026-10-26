@@ -95,3 +95,4 @@ select:disabled { opacity: .4; cursor: default; }
 /* 드래그로 순서 바꾸기 */
 .drag-handle{cursor:grab;color:var(--muted);font-size:16px;line-height:1;padding:4px 2px;margin-left:-8px;user-select:none}.drag-handle:active{cursor:grabbing}.dragging{opacity:.45}.app-card.drop-before,.group-button.drop-before{box-shadow:0 -2px 0 var(--mint)}.app-card.drop-after,.group-button.drop-after{box-shadow:0 2px 0 var(--mint)}
 .port-owner{display:flex;align-items:center;gap:14px}.port-owner .base-value{margin:0}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;color:var(--orange);background:#2a251c;border:1px solid #4a3e2c;border-radius:5px;padding:2px 7px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

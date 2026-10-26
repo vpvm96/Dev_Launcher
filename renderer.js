@@ -208,6 +208,11 @@ function renderApp(app, position, total) {
   const pathLine = el('div', 'app-path', app.path);
   pathLine.title = app.path;
   const tools = el('div', 'app-tools');
+  if (app.branch) {
+    const branch = el('span', 'branch', `⎇ ${app.branch}`);
+    branch.title = `Git 브랜치 ${app.branch}`;
+    tools.append(branch);
+  }
   for (const [label, target] of [['Finder', 'finder'], ['터미널', 'terminal'], ['VS Code', 'vscode']]) {
     const node = button(label, () => attempt(() => api.openIn(app.id, target)), 'tool-button');
     node.setAttribute('aria-label', `${app.name} ${label}에서 열기`);
