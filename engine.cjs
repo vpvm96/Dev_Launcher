@@ -122,7 +122,7 @@ function portOpen(port) {
 }
 class Engine {
   constructor({ dataDir = path.join(os.homedir(), 'Library/Application Support/Dev Launcher'), openBrowser, tunnelOptions, notify, onChange, nodeRoots } = {}) {
-    this.tunnelOptions = tunnelOptions; this.openBrowser = openBrowser; this.notify = notify; this.onChange = onChange; this.nodeRoots = nodeRoots; this.dataDir = dataDir; this.runtime = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
+    this.tunnelOptions = tunnelOptions; this.openBrowser = openBrowser; this.notify = notify; this.onChange = onChange; this.nodeRoots = nodeRoots; this.dataDir = dataDir; this.runtime = new Map(); this.previous = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
     this.ready = this.load();
   }
   // 상태가 바뀌었음을 화면에 알립니다. 폴링 대신 즉시 갱신하는 용도입니다.
@@ -372,7 +372,7 @@ class Engine {
     if (!group) throw new Error('그룹을 찾을 수 없습니다.');
     group.name = name.trim(); await this.persist();
   }
-  async removeApp(id) { await this.ready; return this.serial(id, async () => { await this.stopProcess(id); for (const g of this.config.groups) g.apps = g.apps.filter(a => a.id !== id); delete this.config.overrides[id]; if (this.config.overrideDrafts) delete this.config.overrideDrafts[id]; await this.persist(); }); }
+  async removeApp(id) { await this.ready; return this.serial(id, async () => { await this.stopProcess(id); for (const g of this.config.groups) g.apps = g.apps.filter(a => a.id !== id); delete this.config.overrides[id]; this.previous.delete(id); if (this.config.overrideDrafts) delete this.config.overrideDrafts[id]; await this.persist(); }); }
   async env(id, mode) {
     await this.ready; const app = this.app(id); this.mode(mode, app); let base = {}, envFileMissing = false;
     // 환경 파일이 없어도 설정 화면에서 경로를 고칠 수 있도록 빈 기본값으로 엽니다.
@@ -414,6 +414,7 @@ class Engine {
     const app = this.app(id), old = this.runtime.get(id);
     const carried = crashes && old?.log ? old.log : new LogBuffer();
     if (old?.pid || old?.tunnel) { if (old.child && old.mode === mode) return; await this.stopProcess(id); }
+    if (!crashes) this.archiveLog(id, old);
     const r = { status: 'launching', mode, log: carried, child: null, crashes }; this.runtime.set(id, r); this.changed();
     try {
       if (!await isDirectory(app.path)) throw new Error('프로젝트 폴더를 찾을 수 없습니다. 폴더를 다시 지정해 주세요.');
@@ -511,8 +512,14 @@ class Engine {
     for (let i = 0; i < 30; i++) { try { process.kill(-pid, 0); } catch { return; } await delay(100); }
     kill('SIGKILL');
   }
+  // 종료·재시작으로 로그를 비우기 전에 직전 실행 로그로 보관합니다. 비밀값은 보관 시점에 가립니다.
+  archiveLog(id, r) {
+    const text = r?.log.text(this.redactor(r));
+    if (text) this.previous.set(id, { text, mode: r.mode, endedAt: Date.now() });
+  }
+  previousLogs(id) { return this.previous.get(id) || null; }
   async stopProcess(id) {
-    const r = this.runtime.get(id); if (r?.tunnel) await r.tunnel.close(); if (!r?.pid) { if (r) { r.error = undefined; r.discardLogs = true; r.log.clear(); r.redactions = []; this.setStatus(r, 'stopped'); } return; }
+    const r = this.runtime.get(id); this.archiveLog(id, r); if (r?.tunnel) await r.tunnel.close(); if (!r?.pid) { if (r) { r.error = undefined; r.discardLogs = true; r.log.clear(); r.redactions = []; this.setStatus(r, 'stopped'); } return; }
     r.stopping = true;
     r.discardLogs = true; r.log.clear(); r.redactions = [];
     await this.terminateGroup(r.pid);

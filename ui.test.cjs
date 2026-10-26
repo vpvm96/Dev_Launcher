@@ -545,3 +545,25 @@ test('projects and groups reorder by dragging', { timeout: 40000 }, async t => {
   assert.deepEqual(groups, [['Other', []], ['Test Workspace', ['second', 'user']]]);
   assert.deepEqual(errors, []);
 });
+
+test('log dialog shows the previous run after a restart', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await fs.writeFile(path.join(project, 'server.cjs'), "// 실행마다 다른 표식을 출력하는 테스트 서버\nconsole.log('run ' + process.pid);require('node:http').createServer((q,s)=>s.end('ok')).listen(Number(process.env.PORT));");
+  await page.locator('#start-selected').click();
+  await expect(page.locator('.app-card .status')).toHaveText('준비됨');
+  await page.getByRole('button', { name: '로그', exact: true }).click();
+  await expect(page.locator('#log-output')).toContainText('run ');
+  await expect(page.getByRole('button', { name: '직전 실행 로그', exact: true })).toHaveCount(0);
+  const first = (await page.locator('#log-output').textContent()).match(/run (\d+)/)[1];
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '재시작', exact: true }).click();
+  await expect(page.locator('.app-card .status')).toHaveText('준비됨');
+  await page.getByRole('button', { name: '로그', exact: true }).click();
+  await expect(page.locator('#log-output')).not.toContainText(`run ${first}`);
+  await page.getByRole('button', { name: '직전 실행 로그', exact: true }).click();
+  await expect(page.locator('#modal-title')).toHaveText('user 직전 실행 로그');
+  await expect(page.locator('.log-output')).toContainText(`run ${first}`);
+  await page.getByRole('button', { name: '현재 로그', exact: true }).click();
+  await expect(page.locator('#log-output')).not.toContainText(`run ${first}`);
+  assert.deepEqual(errors, []);
+});

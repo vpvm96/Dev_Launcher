@@ -532,6 +532,19 @@ function drawLogs(lines) {
   }
   if (atBottom) body.scrollTop = body.scrollHeight;
 }
+// 종료·재시작 직전까지의 로그를 보여 준다. 다시 갱신되지 않는 보관본이다.
+function showPreviousLogs(app, previous) {
+  modal(`${app.name} 직전 실행 로그`, `${upper(previous.mode)} / ${new Date(previous.endedAt).toLocaleTimeString()} 종료`);
+  const tools = el('div', 'log-tools');
+  tools.append(
+    button('현재 로그', () => { void showLogs(app); }),
+    button('복사', () => attempt(async () => { await api.copyText(stripAnsi(previous.text)); toast('직전 실행 로그를 복사했어요.'); })),
+  );
+  const output = el('pre', 'log-output');
+  renderAnsi(previous.text, output, plainStyle());
+  $('modal-body').append(tools, output);
+  $('modal-body').scrollTop = $('modal-body').scrollHeight;
+}
 async function showLogs(app) {
   modal(`${app.name} 로그`, `${upper(app.mode || mode(app))} / PROCESS OUTPUT`);
   const tools = el('div', 'log-tools');
@@ -544,6 +557,8 @@ async function showLogs(app) {
   const copy = button('복사', () => attempt(async () => { await api.copyText(stripAnsi(logContent())); toast('로그를 복사했어요.'); }));
   const clear = button('지우기', () => attempt(async () => { await api.clearLogs(app.id); state.logCursor = null; await refreshLogs(); }));
   tools.append(search, copy, clear);
+  const previous = await api.previousLogs(app.id);
+  if (previous) tools.append(button('직전 실행 로그', () => showPreviousLogs(app, previous)));
   const output = el('pre', 'log-output', '로그 불러오는 중…');
   output.id = 'log-output';
   $('modal-body').append(tools, output);

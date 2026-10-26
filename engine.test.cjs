@@ -681,3 +681,24 @@ test('projects and groups can be placed at any position for drag reordering', as
   await assert.rejects(engine.placeGroup(second.id, -1), /위치가 올바르지 않습니다/);
   assert.deepEqual((await new Engine({ dataDir }).list()).groups.map(g => g.name), ['Third', 'Test', 'Second']);
 });
+test('stopping or restarting keeps the previous run log separately with secrets hidden', async t => {
+  const { engine, app, project } = await fixture(t, 'node server.cjs');
+  await fs.writeFile(path.join(project, 'server.cjs'), "console.log('run marker', process.pid, process.env.TOKEN); setInterval(()=>{},1000);");
+  assert.equal(engine.previousLogs(app.id), null);
+  await engine.start(app.id, 'dev');
+  for (let i = 0; i < 60 && !engine.logs(app.id).includes('run marker'); i++) await delay(25);
+  const firstRun = engine.logs(app.id);
+  await engine.stop(app.id);
+  assert.equal(engine.logs(app.id), '');
+  const previous = engine.previousLogs(app.id);
+  assert.equal(previous.text, firstRun);
+  assert.equal(previous.mode, 'dev');
+  assert.ok(!previous.text.includes('base-token-private'));
+  await engine.start(app.id, 'dev');
+  for (let i = 0; i < 60 && !engine.logs(app.id).includes('run marker'); i++) await delay(25);
+  const secondRun = engine.logs(app.id);
+  await engine.restart(app.id, 'dev');
+  assert.equal(engine.previousLogs(app.id).text, secondRun);
+  await engine.removeApp(app.id);
+  assert.equal(engine.previousLogs(app.id), null);
+});
