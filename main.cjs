@@ -63,9 +63,9 @@ async function refreshTray() {
     { label: 'Dev Launcher 열기', click: showWindow },
     { type: 'separator' },
     ...(apps.length ? apps.map(a => ({
-      label: `${marks[a.status] || '○'} ${a.name} · ${a.group}${['running', 'launching'].includes(a.status) ? ` (${String(a.mode).toUpperCase()})` : ''}`,
+      label: `${a.status === 'running' && !a.ready ? marks.launching : marks[a.status] || '○'} ${a.name} · ${a.group}${['running', 'launching'].includes(a.status) ? ` (${String(a.mode).toUpperCase()})` : ''}`,
       submenu: [
-        { label: '열기', enabled: a.status === 'running' && !!a.port, click: () => shell.openExternal(`http://localhost:${Number(a.port)}`) },
+        { label: '열기', enabled: a.ready && !!a.port, click: () => shell.openExternal(`http://localhost:${Number(a.port)}`) },
         { label: ['running', 'launching'].includes(a.status) ? '재시작' : '실행', click: () => engine[['running', 'launching'].includes(a.status) ? 'restart' : 'start'](a.id, a.mode || 'dev').catch(error => notify({ title: `${a.name} 실행 실패`, body: error.message })) },
         { label: '종료', enabled: ['running', 'launching'].includes(a.status), click: () => engine.stop(a.id).catch(() => {}) },
       ],

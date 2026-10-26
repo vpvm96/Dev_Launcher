@@ -648,3 +648,17 @@ test('logTail streams only new lines and keeps far more than 100KB of output', a
   assert.equal(next.reset, false);
   assert.deepEqual(next.lines, ['late line']);
 });
+test('running projects report ready only after their port accepts connections', async t => {
+  const listener = net.createServer(); await new Promise(r => listener.listen(0, r));
+  const port = listener.address().port; await new Promise(r => listener.close(r));
+  const { engine, app, project } = await fixture(t, `PORT=${port} node server.cjs`);
+  await fs.writeFile(path.join(project, 'server.cjs'), "setTimeout(()=>require('http').createServer((q,s)=>s.end('ok')).listen(Number(process.env.PORT)),600);");
+  await engine.start(app.id, 'dev');
+  let listed = (await engine.list()).groups[0].apps[0];
+  assert.equal(listed.status, 'running');
+  assert.equal(listed.ready, false);
+  for (let i = 0; i < 60 && !listed.ready; i++) { await delay(50); listed = (await engine.list()).groups[0].apps[0]; }
+  assert.equal(listed.ready, true);
+  await engine.stop(app.id);
+  assert.equal((await engine.list()).groups[0].apps[0].ready, false);
+});

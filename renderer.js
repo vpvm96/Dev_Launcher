@@ -184,8 +184,10 @@ function renderApp(app, position, total) {
   const status = el('span', 'status');
   const label = state.waiting.has(app.id) ? '대기 중…' : state.busy.has(app.id) ? '처리 중…'
     : app.missing && !active(app) ? '폴더 없음'
-    : ({ running: '실행 중', launching: '시작 중', error: '실행 실패', stopped: '중지됨' }[app.status] || '중지됨');
-  status.append(el('span', `dot ${state.waiting.has(app.id) ? 'launching' : app.missing && !active(app) ? 'error' : app.status}`), document.createTextNode(label));
+    : app.status === 'running' && !app.ready ? `시작 중 · :${app.port} 대기`
+    : ({ running: '준비됨', launching: '시작 중', error: '실행 실패', stopped: '중지됨' }[app.status] || '중지됨');
+  const dot = state.waiting.has(app.id) || (app.status === 'running' && !app.ready) ? 'launching' : app.missing && !active(app) ? 'error' : app.status;
+  status.append(el('span', `dot ${dot}`), document.createTextNode(label));
   const order = el('span', 'order');
   const up = button('▲', () => attempt(async () => { await api.moveApp(app.id, -1); await refresh(true); }), 'order-button');
   up.setAttribute('aria-label', `${app.name} 위로 이동`);
@@ -210,7 +212,7 @@ function renderApp(app, position, total) {
 
   const actions = el('div', 'actions');
   const items = [
-    ['열기', () => attempt(() => api.openApp(app.id)), !active(app)],
+    ['열기', () => attempt(() => api.openApp(app.id)), !app.ready || !app.port],
     ['로그', () => showLogs(app), false],
     ['환경 설정', () => attempt(() => editEnv(app)), false],
     [active(app) ? '재시작' : '실행', () => action(app, active(app) ? 'restart' : 'start'), app.missing],

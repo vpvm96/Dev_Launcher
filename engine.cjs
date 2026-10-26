@@ -188,7 +188,7 @@ class Engine {
   async list() {
     await this.ready;
     const missing = new Map(await Promise.all(this.config.groups.flatMap(g => g.apps).map(async a => [a.id, !await isDirectory(a.path)])));
-    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, missing: missing.get(a.id) }; }) })) };
+    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', ready: r?.status === 'running' && r.ready === true, mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, missing: missing.get(a.id) }; }) })) };
   }
   async setTrayMode(enabled) {
     await this.ready;
@@ -244,7 +244,7 @@ class Engine {
     while (Date.now() < deadline) {
       const r = this.runtime.get(id);
       if (!r || ['error', 'stopped'].includes(r.status)) throw new Error('앞 프로젝트가 실행되지 않아 대기를 중단했습니다.');
-      if (r.status === 'running' && (!r.port || await portOpen(r.port))) return true;
+      if (r.status === 'running' && r.ready) return true;
       await delay(300);
     }
     throw new Error('앞 프로젝트의 준비를 기다리는 시간이 지났습니다.');
@@ -293,17 +293,24 @@ class Engine {
     if (typeof enabled !== 'boolean') throw new Error('자동 열기 설정이 올바르지 않습니다.');
     this.config.autoOpen = enabled; await this.persist();
   }
-  async openWhenReady(id, runtime) {
-    if (!this.openBrowser || !runtime.port) return;
-    const current = () => !this.closing && this.config.autoOpen !== false && this.runtime.get(id) === runtime && runtime.child && !runtime.stopping;
-    const deadline = Date.now() + 120000;
-    while (current() && Date.now() < deadline) {
+  // 포트가 열리면 준비됨으로 표시하고, 설정에 따라 브라우저를 엽니다. 포트를 모르면 실행 즉시 준비됨으로 봅니다.
+  async watchReady(id, runtime) {
+    const alive = () => !this.closing && this.runtime.get(id) === runtime && runtime.child && !runtime.stopping;
+    const autoOpen = () => this.openBrowser && this.config.autoOpen !== false;
+    if (!runtime.port) { runtime.ready = true; this.changed(); return; }
+    const started = Date.now();
+    let warned = false;
+    while (alive()) {
       const listening = await portOpen(runtime.port);
-      if (!current()) return;
-      if (listening) { await this.openBrowser(`http://localhost:${runtime.port}`); return; }
+      if (!alive()) return;
+      if (listening) {
+        runtime.ready = true; this.changed();
+        if (autoOpen() && Date.now() - started <= 120000) await this.openBrowser(`http://localhost:${runtime.port}`);
+        return;
+      }
+      if (!warned && autoOpen() && Date.now() - started > 120000) { warned = true; runtime.log.push('\n브라우저 자동 열기 대기 시간이 지났습니다. 서버 준비 후 열기 버튼을 눌러 주세요.\n'); }
       await delay(250);
     }
-    if (current()) runtime.log.push('\n브라우저 자동 열기 대기 시간이 지났습니다. 서버 준비 후 열기 버튼을 눌러 주세요.\n');
   }
   async addGroup(name) { await this.ready; if (!String(name).trim()) throw new Error('그룹 이름을 입력해 주세요.'); const group = { id: randomUUID(), name: String(name).trim(), apps: [] }; this.config.groups.push(group); await this.persist(); return group; }
   async addApp(groupId, config) {
@@ -466,7 +473,7 @@ class Engine {
       });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       this.setStatus(r, 'running');
-      void this.openWhenReady(id, r).catch(() => { if (!r.discardLogs) r.log.push('\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n'); });
+      void this.watchReady(id, r).catch(() => { if (!r.discardLogs) r.log.push('\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n'); });
       append(`\n[${new Date().toLocaleTimeString()}] ${mode.toUpperCase()} 실행\n`);
     } catch (error) { await r.tunnel?.close(); r.error = error.message; this.setStatus(r, 'error'); throw error; }
   }

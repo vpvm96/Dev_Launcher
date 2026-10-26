@@ -464,3 +464,14 @@ test('cards flag a moved project folder and disable launching', { timeout: 40000
   await expect(page.getByRole('button', { name: '실행', exact: true })).toBeDisabled();
   assert.deepEqual(errors, []);
 });
+
+test('cards switch from waiting on the port to ready and enable opening', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await fs.writeFile(path.join(project, 'server.cjs'), "// 늦게 포트를 여는 테스트 서버\nsetTimeout(()=>require('node:http').createServer((q,s)=>s.end('ok')).listen(Number(process.env.PORT)),1500);");
+  await page.locator('#start-selected').click();
+  await expect(page.locator('.app-card .status')).toContainText('대기');
+  await expect(page.getByRole('button', { name: '열기', exact: true })).toBeDisabled();
+  await expect(page.locator('.app-card .status')).toHaveText('준비됨');
+  await expect(page.getByRole('button', { name: '열기', exact: true })).toBeEnabled();
+  assert.deepEqual(errors, []);
+});
