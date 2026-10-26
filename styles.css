@@ -81,3 +81,5 @@ select:disabled { opacity: .4; cursor: default; }
 
 /* 환경 설정의 실행 환경·프로젝트 옵션 영역 */
 .option-section{border:1px solid var(--line);border-radius:10px;padding:16px;margin:0 0 22px}.option-section h3{margin:0 0 12px;font-size:13px;font-weight:650}.option-section .help{margin:6px 0 0}.option-field{margin-bottom:12px}.option-field:last-child{margin-bottom:0}.option-field .check-label{color:var(--text)}.mode-list{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}.mode-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 6px 4px 12px;font-size:11px;font-weight:700;color:var(--mint);background:#1a2420}.chip-remove{min-height:20px;width:20px;padding:0;font-size:12px;line-height:1;border-radius:50%;background:transparent;color:var(--muted)}.option-section .new-key-row{margin-top:0}
+
+.missing-folder{display:flex;align-items:center;justify-content:space-between;gap:12px}.missing-folder button{font-size:11px;min-height:30px;padding:5px 10px;flex-shrink:0}

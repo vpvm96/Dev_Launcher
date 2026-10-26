@@ -165,6 +165,7 @@ function renderApp(app, position, total) {
   for (const [label, target] of [['Finder', 'finder'], ['터미널', 'terminal'], ['VS Code', 'vscode']]) {
     const node = button(label, () => attempt(() => api.openIn(app.id, target)), 'tool-button');
     node.setAttribute('aria-label', `${app.name} ${label}에서 열기`);
+    node.disabled = app.missing;
     tools.append(node);
   }
   const badges = el('span', 'badges');
@@ -175,8 +176,9 @@ function renderApp(app, position, total) {
 
   const status = el('span', 'status');
   const label = state.waiting.has(app.id) ? '대기 중…' : state.busy.has(app.id) ? '처리 중…'
+    : app.missing && !active(app) ? '폴더 없음'
     : ({ running: '실행 중', launching: '시작 중', error: '실행 실패', stopped: '중지됨' }[app.status] || '중지됨');
-  status.append(el('span', `dot ${state.waiting.has(app.id) ? 'launching' : app.status}`), document.createTextNode(label));
+  status.append(el('span', `dot ${state.waiting.has(app.id) ? 'launching' : app.missing && !active(app) ? 'error' : app.status}`), document.createTextNode(label));
   const order = el('span', 'order');
   const up = button('▲', () => attempt(async () => { await api.moveApp(app.id, -1); await refresh(true); }), 'order-button');
   up.setAttribute('aria-label', `${app.name} 위로 이동`);
@@ -204,7 +206,7 @@ function renderApp(app, position, total) {
     ['열기', () => attempt(() => api.openApp(app.id)), !active(app)],
     ['로그', () => showLogs(app), false],
     ['환경 설정', () => attempt(() => editEnv(app)), false],
-    [active(app) ? '재시작' : '실행', () => action(app, active(app) ? 'restart' : 'start'), false],
+    [active(app) ? '재시작' : '실행', () => action(app, active(app) ? 'restart' : 'start'), app.missing],
     ['종료', () => action(app, 'stop'), !active(app)],
   ];
   for (const [text, handler, disabled] of items) {
@@ -220,7 +222,13 @@ function renderApp(app, position, total) {
   actions.append(remove);
   bottom.append(modeArea, actions);
   card.append(top, bottom);
-  if (app.error) {
+  if (app.missing) {
+    const missing = el('div', 'missing-folder');
+    missing.append(el('p', 'inline-error', '프로젝트 폴더를 찾을 수 없습니다. 폴더를 옮겼다면 새 위치를 지정해 주세요.'), button('폴더 다시 지정', () => attempt(async () => {
+      if (await api.relocateApp(app.id)) { await refresh(true); toast('프로젝트 폴더를 다시 지정했어요.'); }
+    })));
+    card.append(missing);
+  } else if (app.error) {
     const error = el('p', 'inline-error', app.error);
     error.setAttribute('role', 'status');
     card.append(error);

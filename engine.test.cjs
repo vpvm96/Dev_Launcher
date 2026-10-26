@@ -620,3 +620,18 @@ test('logs hide only secret-looking values and keep ordinary settings visible', 
   assert.match(text, /port 4321 development /);
   for (const secret of ['key-value-secret', 'pa55word', 'base-token-private']) assert.ok(!text.includes(secret), secret);
 });
+test('moved project folders are flagged, refuse to start and can be relocated', async t => {
+  const { engine, app, project, root } = await fixture(t, 'node server.cjs');
+  const moved = path.join(root, 'moved-project');
+  await fs.rename(project, moved);
+  const listed = (await engine.list()).groups[0].apps[0];
+  assert.equal(listed.missing, true);
+  await assert.rejects(engine.start(app.id, 'dev'), /프로젝트 폴더를 찾을 수 없습니다/);
+  await assert.rejects(engine.relocateApp(app.id, path.join(root, 'nowhere')), /ENOENT|폴더/);
+  await engine.relocateApp(app.id, moved);
+  const relocated = (await engine.list()).groups[0].apps[0];
+  assert.equal(relocated.missing, false);
+  assert.equal(relocated.path, await fs.realpath(moved));
+  assert.equal(relocated.scripts.dev, 'start:dev');
+  await engine.start(app.id, 'dev'); await observed(moved);
+});

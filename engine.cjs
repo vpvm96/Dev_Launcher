@@ -106,6 +106,9 @@ async function resolveNodeBin(directory, roots = defaultNodeRoots()) {
   }
   return { ...request, bin: best?.bin || null };
 }
+async function isDirectory(directory) {
+  try { return (await fs.stat(directory)).isDirectory(); } catch { return false; }
+}
 function portOpen(port) {
   return new Promise(resolve => {
     const socket = net.createConnection({ host: 'localhost', port });
@@ -183,7 +186,8 @@ class Engine {
   serial(id, fn) { const next = (this.queues.get(id) || Promise.resolve()).catch(() => {}).then(fn); this.queues.set(id, next); return next; }
   async list() {
     await this.ready;
-    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error }; }) })) };
+    const missing = new Map(await Promise.all(this.config.groups.flatMap(g => g.apps).map(async a => [a.id, !await isDirectory(a.path)])));
+    return { autoOpen: this.config.autoOpen !== false, trayMode: this.config.trayMode === true, groups: this.config.groups.map(g => ({ ...g, apps: g.apps.map(a => { const r = this.runtime.get(a.id); return { ...a, modes: modesOf(a), options: sanitizeOptions(a.options), status: r?.status || 'stopped', mode: r?.mode || 'dev', port: r?.port || a.ports?.dev || a.port, error: r?.error, missing: missing.get(a.id) }; }) })) };
   }
   async setTrayMode(enabled) {
     await this.ready;
@@ -325,6 +329,21 @@ class Engine {
     if (typeof name !== 'string' || !name.trim()) throw new Error('프로젝트 이름을 입력해 주세요.');
     return this.serial(id, async () => { this.app(id).name = name.trim(); await this.persist(); });
   }
+  // 옮겨진 프로젝트 폴더를 다시 지정합니다. 실행 스크립트와 환경 설정은 그대로 유지합니다.
+  async relocateApp(id, directory) {
+    await this.ready;
+    return this.serial(id, async () => {
+      const app = this.app(id), absolute = await fs.realpath(directory);
+      if (!await isDirectory(absolute)) throw new Error('프로젝트 폴더를 선택해 주세요.');
+      const group = this.config.groups.find(g => g.apps.includes(app));
+      if (group.apps.some(a => a !== app && a.path === absolute)) throw new Error('이 그룹에 이미 등록된 프로젝트 폴더입니다.');
+      app.path = absolute;
+      const pkg = await projectCommands(absolute);
+      for (const mode of modesOf(app)) { app.ports ||= {}; app.ports[mode] = await this.portOf(app, pkg, mode); }
+      app.port = app.ports.dev;
+      await this.persist();
+    });
+  }
   async renameGroup(id, name) {
     await this.ready;
     if (typeof name !== 'string' || !name.trim()) throw new Error('그룹 이름을 입력해 주세요.');
@@ -376,6 +395,7 @@ class Engine {
     if (old?.pid || old?.tunnel) { if (old.child && old.mode === mode) return; await this.stopProcess(id); }
     const r = { status: 'launching', mode, log: carried, child: null, crashes }; this.runtime.set(id, r); this.changed();
     try {
+      if (!await isDirectory(app.path)) throw new Error('프로젝트 폴더를 찾을 수 없습니다. 폴더를 다시 지정해 주세요.');
       const pkg = await projectCommands(app.path);
       const manual = app.manualScripts?.[mode] === true;
       const script = app.scripts[mode]; if (!script || (!manual && !Object.hasOwn(pkg.scripts, script))) throw new Error(`${mode.toUpperCase()} 실행 명령을 설정해 주세요.`);

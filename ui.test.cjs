@@ -453,3 +453,14 @@ test('missing env file still opens settings with a warning and saves a fixed pat
   assert.equal(await page.evaluate(() => window.launcher.env('test-app', 'dev').then(value => value.envFileMissing)), false);
   assert.deepEqual(errors, []);
 });
+
+test('cards flag a moved project folder and disable launching', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await fs.rename(project, project + '-moved');
+  t.after(() => fs.rm(project + '-moved', { recursive: true, force: true }));
+  await page.reload();
+  await expect(page.locator('.app-card .status')).toHaveText('폴더 없음');
+  await expect(page.getByRole('button', { name: '폴더 다시 지정' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '실행', exact: true })).toBeDisabled();
+  assert.deepEqual(errors, []);
+});

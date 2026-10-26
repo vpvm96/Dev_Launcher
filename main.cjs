@@ -118,6 +118,12 @@ else {
       const result = await dialog.showOpenDialog(window, { title: '프로젝트 폴더 선택', properties: ['openDirectory'] });
       return result.canceled ? null : engine.discover(result.filePaths[0]);
     });
+    handle('relocateApp', async (id) => {
+      const result = await dialog.showOpenDialog(window, { title: '프로젝트 폴더 다시 지정', properties: ['openDirectory'] });
+      if (result.canceled) return false;
+      await engine.relocateApp(id, result.filePaths[0]);
+      return true;
+    });
     handle('choosePem', async () => {
       const result = await dialog.showOpenDialog(window, { title: 'SSH 개인 키 선택', properties: ['openFile'], filters: [{ name: 'PEM 키', extensions: ['pem'] }, { name: '모든 파일', extensions: ['*'] }] });
       return result.canceled ? null : result.filePaths[0];
