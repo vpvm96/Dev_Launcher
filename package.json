@@ -11,7 +11,8 @@
     "package": "electron-builder --mac --arm64 --publish never -c.mac.notarize=false",
     "test:ui": "node --test ui.test.cjs",
     "package:release": "node scripts/package-release.cjs",
-    "release:publish": "node scripts/publish-release.cjs"
+    "release:publish": "node scripts/publish-release.cjs",
+    "release:prune": "node scripts/prune-releases.cjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

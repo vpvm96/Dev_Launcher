@@ -25,4 +25,6 @@ try {
   }
   run('gh', ['release', 'upload', tag, '--repo', repo, ...files]);
   run('gh', ['release', 'edit', tag, '--repo', repo, '--draft=false']);
+  try { run('node', [path.join(__dirname, 'prune-releases.cjs'), '--apply']); }
+  catch { console.warn('이전 릴리스 정리에 실패했습니다. 나중에 npm run release:prune 으로 다시 실행해 주세요.'); }
 } catch (error) { console.error(error.message); process.exit(1); }
