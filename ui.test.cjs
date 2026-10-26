@@ -22,6 +22,8 @@ async function setup(t) {
   await fs.writeFile(path.join(data, 'config.json'), JSON.stringify({ autoOpen: false, groups: [{ id: 'test-group', name: 'Test Workspace', apps: [{ id: 'test-app', name: 'user', path: project, scripts: { dev: 'start:dev', prod: 'start:prod' }, envFiles: { dev: 'env/.env.dev', prod: 'env/.env.prod' }, ports: { dev: port, prod: port }, port }] }], overrides: {} }));
   const env = { ...process.env, DEV_LAUNCHER_DATA_DIR: data }; delete env.ELECTRON_RUN_AS_NODE;
   const instance = await electron.launch({ args: [__dirname], env });
+  // 종료 확인 창은 기본으로 승인해 테스트 종료가 멈추지 않게 한다.
+  await instance.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0 }); });
   const appProcess = instance.process();
   t.after(async () => { if (appProcess.exitCode === null) await instance.close(); await fs.rm(root, { recursive: true, force: true }); });
   const page = await instance.firstWindow();
@@ -201,6 +203,8 @@ test('app restart shuts down managed servers before scheduling relaunch', { time
   }, { marker, child });
   const closed = instance.waitForEvent('close');
   await page.getByRole('button', { name: '앱 재시작', exact: true }).click();
+  await expect(page.locator('#modal')).toContainText('실행 중인 서버 1개');
+  await page.getByRole('button', { name: '종료 후 재시작', exact: true }).click();
   await closed;
   assert.deepEqual(JSON.parse(await fs.readFile(marker, 'utf8')), { alive: false });
 });
@@ -474,4 +478,21 @@ test('cards switch from waiting on the port to ready and enable opening', { time
   await expect(page.locator('.app-card .status')).toHaveText('준비됨');
   await expect(page.getByRole('button', { name: '열기', exact: true })).toBeEnabled();
   assert.deepEqual(errors, []);
+});
+
+test('closing the window with running servers asks first and keeps them when cancelled', { timeout: 40000 }, async t => {
+  const { page, instance, project } = await setup(t);
+  await page.locator('#start-selected').click();
+  await expect.poll(async () => { try { return JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid; } catch { return 0; } }).toBeGreaterThan(0);
+  const child = JSON.parse(await fs.readFile(path.join(project, 'observed.json'), 'utf8')).pid;
+  await instance.evaluate(({ dialog }) => { globalThis.asked = []; dialog.showMessageBox = async (...args) => { globalThis.asked.push(args.at(-1).message); return { response: 1 }; }; });
+  await instance.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await expect.poll(() => instance.evaluate(() => globalThis.asked)).toEqual(['실행 중인 서버 1개가 함께 종료됩니다.']);
+  await expect(page.locator('#running-count')).toContainText('1');
+  assert.doesNotThrow(() => process.kill(child, 0));
+  await instance.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0 }); });
+  const closed = instance.waitForEvent('close');
+  await instance.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await closed;
+  await expect.poll(() => { try { process.kill(child, 0); return true; } catch { return false; } }).toBe(false);
 });

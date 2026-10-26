@@ -8,7 +8,7 @@ const { Engine } = require('./engine.cjs');
 const { autoUpdater } = require('electron-updater');
 const { createUpdater } = require('./updater.cjs');
 const { readShellEnv } = require('./shell-env.cjs');
-let engine, window, tray = null, quitting = false, restarting = false;
+let engine, window, tray = null, quitting = false, restarting = false, quitConfirmed = false;
 const page = pathToFileURL(path.join(__dirname, 'index.html')).href;
 app.setName('Dev Launcher');
 if (process.env.DEV_LAUNCHER_DATA_DIR) app.setPath('userData', process.env.DEV_LAUNCHER_DATA_DIR);
@@ -19,6 +19,17 @@ const notify = ({ title, body }) => { if (Notification.isSupported()) new Notifi
 const openWith = (application, target) => new Promise((resolve, reject) => {
   execFile('/usr/bin/open', ['-a', application, target], error => error ? reject(new Error(`${application}을(를) 열 수 없습니다. 설치 여부를 확인해 주세요.`)) : resolve());
 });
+
+// 실행 중인 서버가 있으면 창을 닫거나 앱을 종료하기 전에 한 번 확인한다.
+const runningCount = () => engine ? [...engine.runtime.values()].filter(r => r.child).length : 0;
+async function confirmQuit() {
+  const count = runningCount();
+  if (!count || quitConfirmed) return true;
+  const options = { type: 'warning', buttons: ['종료', '취소'], defaultId: 1, cancelId: 1, message: `실행 중인 서버 ${count}개가 함께 종료됩니다.`, detail: trayMode() ? '' : '메뉴 바 상주를 켜면 창을 닫아도 서버가 유지됩니다.' };
+  const { response } = window?.isVisible() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+  quitConfirmed = response === 0;
+  return quitConfirmed;
+}
 
 // 창 크기와 위치를 기억하고, 화면 밖에 저장된 값은 무시한다.
 const windowStateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -166,7 +177,11 @@ else {
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     window.on('resize', rememberWindowState); window.on('move', rememberWindowState);
-    window.on('close', event => { if (trayMode() && !quitting && !restarting) { event.preventDefault(); window.hide(); } });
+    window.on('close', event => {
+      if (quitting || restarting) return;
+      if (trayMode()) { event.preventDefault(); window.hide(); return; }
+      if (runningCount() && !quitConfirmed) { event.preventDefault(); void confirmQuit().then(ok => { if (ok) window.close(); }); }
+    });
     await window.loadFile('index.html');
     await engine.ready; scheduleTray();
     if (app.isPackaged && !process.env.DEV_LAUNCHER_DATA_DIR) {
@@ -178,6 +193,7 @@ else {
   app.on('before-quit', event => {
     if (quitting || !engine) return;
     event.preventDefault();
+    if (!restarting && runningCount() && !quitConfirmed) { void confirmQuit().then(ok => { if (ok) app.quit(); }); return; }
     quitting = true;
     engine.shutdown().finally(() => { tray?.destroy(); if (restarting) app.relaunch(); app.quit(); });
   });

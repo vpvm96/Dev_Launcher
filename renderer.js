@@ -758,12 +758,20 @@ $('import-config').addEventListener('click', () => attempt(async () => {
   toast(`그룹 ${result.groups}개, 프로젝트 ${result.apps}개를 가져왔어요.${skipped}`, result.skipped.length > 0);
 }));
 
-$('restart-app').addEventListener('click', async () => {
+async function restartApp() {
   const control = $('restart-app');
   control.disabled = true;
   control.textContent = '재시작 중…';
   try { await api.restartApp(); }
   catch (error) { control.disabled = false; control.textContent = '앱 재시작'; toast(error.message, true); }
+}
+// 실행 중인 서버가 있으면 종료된다는 점을 확인받은 뒤 재시작한다.
+$('restart-app').addEventListener('click', () => {
+  const running = state.groups.flatMap((group) => group.apps).filter(active).length;
+  if (!running) { void restartApp(); return; }
+  modal('앱 재시작', 'DEV LAUNCHER');
+  $('modal-body').append(el('p', 'help', `실행 중인 서버 ${running}개를 종료한 뒤 런처를 다시 엽니다.`));
+  submitButton('종료 후 재시작', async () => { closeModal(); await restartApp(); });
 });
 
 let updateView = false, updateSignature = '', updateChecking = false, latestUpdate = null;
