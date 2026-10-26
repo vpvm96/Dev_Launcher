@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node --test engine.test.cjs updater.test.cjs shell-env.test.cjs",
+    "test": "node --test engine.test.cjs updater.test.cjs shell-env.test.cjs log-buffer.test.cjs",
     "package": "electron-builder --mac --arm64 --publish never -c.mac.notarize=false",
     "test:ui": "node --test ui.test.cjs",
     "package:release": "node scripts/package-release.cjs",
@@ -40,6 +40,7 @@
       "engine.cjs",
       "ssh-tunnel.cjs",
       "shell-env.cjs",
+      "log-buffer.cjs",
       "updater.cjs",
       "index.html",
       "renderer.js",

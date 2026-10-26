@@ -635,3 +635,16 @@ test('moved project folders are flagged, refuse to start and can be relocated', 
   assert.equal(relocated.scripts.dev, 'start:dev');
   await engine.start(app.id, 'dev'); await observed(moved);
 });
+test('logTail streams only new lines and keeps far more than 100KB of output', async t => {
+  const { engine, app, project } = await fixture(t, 'node server.cjs');
+  await fs.writeFile(path.join(project, 'server.cjs'), "for (let i = 0; i < 3000; i++) console.log('line ' + i + ' ' + 'x'.repeat(60)); setTimeout(() => console.log('late line'), 300); setInterval(()=>{},1000);");
+  await engine.start(app.id, 'dev');
+  for (let i = 0; i < 80 && !engine.logs(app.id).includes('line 2999'); i++) await delay(25);
+  const first = engine.logTail(app.id, null);
+  assert.equal(first.reset, true);
+  assert.ok(first.lines.some(line => line.startsWith('line 0 ')));
+  for (let i = 0; i < 80 && !engine.logs(app.id).includes('late line'); i++) await delay(25);
+  const next = engine.logTail(app.id, first.cursor);
+  assert.equal(next.reset, false);
+  assert.deepEqual(next.lines, ['late line']);
+});

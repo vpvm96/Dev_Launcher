@@ -7,6 +7,7 @@ const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { parse } = require('dotenv');
 const { SshTunnel, validateTunnel } = require('./ssh-tunnel.cjs');
+const { LogBuffer } = require('./log-buffer.cjs');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ENV_PATH = '(?:"([^"\\n]+)"|\'([^\'\\n]+)\'|([^\\s;&|]+))';
 async function readOptional(directory, file) {
@@ -248,7 +249,7 @@ class Engine {
     }
     throw new Error('앞 프로젝트의 준비를 기다리는 시간이 지났습니다.');
   }
-  clearLogs(id) { const r = this.runtime.get(id); if (r) r.log = ''; }
+  clearLogs(id) { this.runtime.get(id)?.log.clear(); }
   // 그룹과 프로젝트 구성만 내보냅니다. 개인 환경값과 SSH 키 경로는 포함하지 않습니다.
   async exportConfig() {
     await this.ready;
@@ -302,7 +303,7 @@ class Engine {
       if (listening) { await this.openBrowser(`http://localhost:${runtime.port}`); return; }
       await delay(250);
     }
-    if (current()) runtime.log = (runtime.log + '\n브라우저 자동 열기 대기 시간이 지났습니다. 서버 준비 후 열기 버튼을 눌러 주세요.\n').slice(-100000);
+    if (current()) runtime.log.push('\n브라우저 자동 열기 대기 시간이 지났습니다. 서버 준비 후 열기 버튼을 눌러 주세요.\n');
   }
   async addGroup(name) { await this.ready; if (!String(name).trim()) throw new Error('그룹 이름을 입력해 주세요.'); const group = { id: randomUUID(), name: String(name).trim(), apps: [] }; this.config.groups.push(group); await this.persist(); return group; }
   async addApp(groupId, config) {
@@ -391,7 +392,7 @@ class Engine {
   async startProcess(id, mode, crashes = 0) {
     if (this.closing) throw new Error('앱을 종료하고 있습니다.');
     const app = this.app(id), old = this.runtime.get(id);
-    const carried = crashes ? old?.log || '' : '';
+    const carried = crashes && old?.log ? old.log : new LogBuffer();
     if (old?.pid || old?.tunnel) { if (old.child && old.mode === mode) return; await this.stopProcess(id); }
     const r = { status: 'launching', mode, log: carried, child: null, crashes }; this.runtime.set(id, r); this.changed();
     try {
@@ -431,15 +432,15 @@ class Engine {
             r.child = null; r.pid = null; r.status = 'error'; r.error = error.message; r.stopping = false;
           }).catch(error => { r.error = error.message; });
         } });
-        r.log += 'SSH 터널 연결 중…\n';
+        r.log.push('SSH 터널 연결 중…\n');
         await r.tunnel.open();
-        r.log += `SSH 터널 연결됨 · 127.0.0.1:${values.tunnel.localPort}\n`;
+        r.log.push(`SSH 터널 연결됨 · 127.0.0.1:${values.tunnel.localPort}\n`);
       }
       const bins = []; for (let dir = app.path; ; dir = path.dirname(dir)) { bins.push(path.join(dir, 'node_modules/.bin')); if (dir === path.dirname(dir)) break; }
       // 프로젝트가 .nvmrc 등으로 Node 버전을 지정하면 nvm·fnm에 설치된 해당 버전을 우선 사용합니다.
       const nodeRequest = await resolveNodeBin(app.path, this.nodeRoots);
-      if (nodeRequest?.bin) { bins.push(nodeRequest.bin); r.log += `${nodeRequest.file}에 따라 Node ${path.basename(path.dirname(nodeRequest.bin).replace(/\/installation$/, ''))}을(를) 사용합니다.\n`; }
-      else if (nodeRequest) r.log += `${nodeRequest.file}의 Node ${nodeRequest.version} 버전을 nvm·fnm에서 찾지 못해 기본 Node를 사용합니다.\n`;
+      if (nodeRequest?.bin) { bins.push(nodeRequest.bin); r.log.push(`${nodeRequest.file}에 따라 Node ${path.basename(path.dirname(nodeRequest.bin).replace(/\/installation$/, ''))}을(를) 사용합니다.\n`); }
+      else if (nodeRequest) r.log.push(`${nodeRequest.file}의 Node ${nodeRequest.version} 버전을 nvm·fnm에서 찾지 못해 기본 Node를 사용합니다.\n`);
       merged.PATH = [...bins, path.dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(path.delimiter);
       if (pkg.type === 'node') {
         merged.npm_lifecycle_event = script; merged.npm_lifecycle_script = raw; merged.npm_package_json = path.join(app.path, 'package.json'); merged.INIT_CWD = app.path;
@@ -449,7 +450,7 @@ class Engine {
       const child = spawn('/bin/sh', ['-c', parsed.command], { cwd: app.path, env: merged, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       r.child = child; r.pid = child.pid;
       r.redactions = Object.entries({ ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides }).filter(([key, value]) => value.length >= 4 && (SECRET_KEY.test(key) || CREDENTIAL_URL.test(value))).map(([, value]) => value).sort((a, b) => b.length - a.length);
-      const append = text => { if (r.discardLogs) return; r.log = (r.log + text).slice(-100000); };
+      const append = text => { if (!r.discardLogs) r.log.push(text); };
       child.stdout.on('data', data => append(data.toString())); child.stderr.on('data', data => append(data.toString()));
       child.once('error', error => { r.error = error.message; r.child = null; this.setStatus(r, 'error'); append(error.message + '\n'); });
       child.once('exit', (code, signal) => {
@@ -465,7 +466,7 @@ class Engine {
       });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       this.setStatus(r, 'running');
-      void this.openWhenReady(id, r).catch(() => { if (r.discardLogs) return; r.log = (r.log + '\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n').slice(-100000); });
+      void this.openWhenReady(id, r).catch(() => { if (!r.discardLogs) r.log.push('\n브라우저 자동 열기에 실패했습니다. 열기 버튼으로 다시 시도해 주세요.\n'); });
       append(`\n[${new Date().toLocaleTimeString()}] ${mode.toUpperCase()} 실행\n`);
     } catch (error) { await r.tunnel?.close(); r.error = error.message; this.setStatus(r, 'error'); throw error; }
   }
@@ -474,7 +475,7 @@ class Engine {
     const restart = sanitizeOptions(app.options).autoRestart && r.crashes < 3;
     try { this.notify?.({ title: `${app.name} 종료됨`, body: `${r.error || '프로세스가 종료되었습니다.'}${restart ? ' 자동으로 다시 시작합니다.' : ''}` }); } catch { /* 알림 실패는 무시합니다. */ }
     if (!restart) return;
-    r.log = (r.log + `\n[${new Date().toLocaleTimeString()}] 비정상 종료로 자동 재시작합니다 (${r.crashes + 1}/3).\n`).slice(-100000);
+    r.log.push(`\n[${new Date().toLocaleTimeString()}] 비정상 종료로 자동 재시작합니다 (${r.crashes + 1}/3).\n`);
     setTimeout(() => {
       void this.serial(id, async () => {
         if (this.closing || this.runtime.get(id) !== r || r.status !== 'error') return;
@@ -491,14 +492,17 @@ class Engine {
     kill('SIGKILL');
   }
   async stopProcess(id) {
-    const r = this.runtime.get(id); if (r?.tunnel) await r.tunnel.close(); if (!r?.pid) { if (r) { r.error = undefined; r.discardLogs = true; r.log = ''; r.redactions = []; this.setStatus(r, 'stopped'); } return; }
+    const r = this.runtime.get(id); if (r?.tunnel) await r.tunnel.close(); if (!r?.pid) { if (r) { r.error = undefined; r.discardLogs = true; r.log.clear(); r.redactions = []; this.setStatus(r, 'stopped'); } return; }
     r.stopping = true;
-    r.discardLogs = true; r.log = ''; r.redactions = [];
+    r.discardLogs = true; r.log.clear(); r.redactions = [];
     await this.terminateGroup(r.pid);
     r.child = null; r.pid = null; r.error = undefined; r.stopping = false; this.setStatus(r, 'stopped');
   }
   async restart(id, mode = 'dev') { await this.ready; this.mode(mode, this.app(id)); return this.serial(id, async () => { await this.stopProcess(id); const next = this.launchQueue.catch(() => {}).then(() => this.startProcess(id, mode)); this.launchQueue = next; return next; }); }
-  logs(id) { const r = this.runtime.get(id); let text = r?.log || ''; for (const value of r?.redactions || []) text = text.split(value).join('[숨김]'); return text; }
+  redactor(r) { return text => { for (const value of r?.redactions || []) text = text.split(value).join('[숨김]'); return text; }; }
+  logs(id) { const r = this.runtime.get(id); return r ? r.log.text(this.redactor(r)) : ''; }
+  // 화면이 마지막으로 받은 줄 이후의 로그만 돌려줍니다.
+  logTail(id, cursor) { const r = this.runtime.get(id); return r ? r.log.since(cursor, this.redactor(r)) : { cursor: null, reset: true, lines: [], partial: '' }; }
   async shutdown() { this.closing = true; await this.ready; await Promise.all(this.config.groups.flatMap(g => g.apps).map(a => this.stop(a.id))); }
 }
 module.exports = { Engine, recipe, springPort, resolveNodeBin };

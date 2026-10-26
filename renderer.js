@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const DEFAULT_MODES = ['dev', 'prod'];
 const state = {
   groups: [], group: null, selected: new Map(), modes: new Map(), busy: new Set(), waiting: new Set(),
-  signature: '', logs: null, logText: null, logFilter: '', refreshing: false,
+  signature: '', logs: null, logLines: [], logPartial: '', logCursor: null, logFilter: '', refreshing: false,
 };
 try {
   const saved = JSON.parse(localStorage.getItem('launcher-selection') || '{}');
@@ -76,12 +76,19 @@ async function refresh(force = false) {
     if (state.refreshAgain) { state.refreshAgain = false; void attempt(() => refresh()); }
   }
 }
+// 마지막으로 받은 줄 이후만 가져와 화면에 덧붙인다. 버퍼가 비워졌으면 전체를 다시 그린다.
 async function refreshLogs() {
   if (!state.logs || !$('modal').open || !$('log-output')) return;
-  const content = await api.logs(state.logs);
-  if (content === state.logText) return;
-  state.logText = content;
-  drawLogs();
+  const id = state.logs;
+  const tail = await api.logTail(id, state.logCursor);
+  if (state.logs !== id) return;
+  state.logCursor = tail.cursor;
+  if (tail.reset) { state.logLines = tail.lines; state.logPartial = tail.partial; drawLogs(); return; }
+  if (!tail.lines.length && tail.partial === state.logPartial) return;
+  state.logLines.push(...tail.lines);
+  state.logPartial = tail.partial;
+  if (state.logLines.length > LOG_LIMIT) { state.logLines.splice(0, state.logLines.length - LOG_LIMIT); drawLogs(); }
+  else drawLogs(tail.lines);
 }
 
 function counts() {
@@ -267,7 +274,7 @@ async function startSelected() {
 }
 
 function modal(title, eyebrow = 'WORKSPACE SETTINGS') {
-  state.logs = null; state.logText = null;
+  resetLogs();
   state.modalRevision = (state.modalRevision || 0) + 1;
   $('modal-title').textContent = title;
   $('modal-eyebrow').textContent = eyebrow;
@@ -424,9 +431,10 @@ function removeApp(app) {
 // 터미널 색상 코드를 화면 색상으로 바꾸고, 커서 이동 같은 나머지 제어 문자는 제거한다.
 const ANSI = /\x1b\[([\d;]*)m|\x1b\[[\d;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r/g;
 const stripAnsi = (text) => text.replace(ANSI, '');
-function renderAnsi(text, target) {
-  target.replaceChildren();
-  const style = { bold: false, fg: null, bg: null };
+const LOG_LIMIT = 5000;
+const plainStyle = () => ({ bold: false, fg: null, bg: null });
+// style은 이어지는 줄에도 색상이 유지되도록 호출 간에 공유한다.
+function renderAnsi(text, target, style) {
   let last = 0;
   const push = (chunk) => {
     if (!chunk) return;
@@ -453,16 +461,30 @@ function renderAnsi(text, target) {
   }
   push(text.slice(last));
 }
-function drawLogs() {
+function resetLogs() { state.logs = null; state.logLines = []; state.logPartial = ''; state.logCursor = null; }
+const logContent = () => [...state.logLines, state.logPartial].join('\n');
+const logMatches = (line) => {
+  const filter = state.logFilter.trim().toLowerCase();
+  return !filter || stripAnsi(line).toLowerCase().includes(filter);
+};
+// lines를 주면 기존 출력 뒤에 덧붙이고, 없으면 전체를 다시 그린다.
+function drawLogs(lines) {
   const output = $('log-output');
   if (!output) return;
   const body = $('modal-body');
   const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 70;
-  const text = state.logText || '';
-  const filter = state.logFilter.trim().toLowerCase();
-  const shown = filter ? text.split('\n').filter((line) => stripAnsi(line).toLowerCase().includes(filter)).join('\n') : text;
-  if (!shown) output.textContent = filter ? '검색 결과가 없습니다.' : '아직 출력된 로그가 없습니다.';
-  else renderAnsi(shown, output);
+  if (!lines || output.dataset.placeholder) { output.replaceChildren(); delete output.dataset.placeholder; state.logStyle = plainStyle(); lines = state.logLines; }
+  output.querySelector('.log-partial')?.remove();
+  for (const line of lines) if (logMatches(line)) renderAnsi(`${line}\n`, output, state.logStyle);
+  if (state.logPartial && logMatches(state.logPartial)) {
+    const partial = el('span', 'log-partial');
+    renderAnsi(state.logPartial, partial, { ...state.logStyle });
+    output.append(partial);
+  }
+  if (!output.childNodes.length) {
+    output.textContent = state.logLines.length || state.logPartial ? '검색 결과가 없습니다.' : '아직 출력된 로그가 없습니다.';
+    output.dataset.placeholder = '1';
+  }
   if (atBottom) body.scrollTop = body.scrollHeight;
 }
 async function showLogs(app) {
@@ -474,18 +496,15 @@ async function showLogs(app) {
   search.setAttribute('aria-label', '로그 검색');
   search.value = state.logFilter;
   search.addEventListener('input', () => { state.logFilter = search.value; drawLogs(); });
-  const copy = button('복사', () => attempt(async () => { await api.copyText(stripAnsi(state.logText || '')); toast('로그를 복사했어요.'); }));
-  const clear = button('지우기', () => attempt(async () => { await api.clearLogs(app.id); state.logText = ''; drawLogs(); }));
+  const copy = button('복사', () => attempt(async () => { await api.copyText(stripAnsi(logContent())); toast('로그를 복사했어요.'); }));
+  const clear = button('지우기', () => attempt(async () => { await api.clearLogs(app.id); state.logCursor = null; await refreshLogs(); }));
   tools.append(search, copy, clear);
   const output = el('pre', 'log-output', '로그 불러오는 중…');
   output.id = 'log-output';
   $('modal-body').append(tools, output);
   state.logs = app.id;
   await attempt(async () => {
-    const logs = await api.logs(app.id);
-    if (state.logs !== app.id) return;
-    state.logText = logs;
-    drawLogs();
+    await refreshLogs();
     $('modal-body').scrollTop = $('modal-body').scrollHeight;
   });
 }
@@ -697,7 +716,7 @@ $('group-down').addEventListener('click', () => attempt(async () => { if (state.
 $('add-group').addEventListener('click', addGroup);
 $('add-app').addEventListener('click', addApp);
 $('close-modal').addEventListener('click', closeModal);
-$('modal').addEventListener('close', () => { state.logs = null; state.logText = null; });
+$('modal').addEventListener('close', resetLogs);
 $('group-mode').addEventListener('change', () => {
   const value = $('group-mode').value;
   if (value === 'mixed') return;
