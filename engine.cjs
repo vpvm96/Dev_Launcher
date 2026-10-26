@@ -56,6 +56,9 @@ function recipe(raw) {
 const DEFAULT_MODES = ['dev', 'prod'];
 const MODE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
 const modesOf = app => Array.isArray(app.modes) && app.modes.length ? app.modes : DEFAULT_MODES;
+// 로그에서 가릴 값은 비밀번호·토큰처럼 보이는 키와 계정 정보가 들어간 접속 주소로 한정합니다.
+const SECRET_KEY = /SECRET|TOKEN|PASS(WORD|WD)?|PWD|KEY|CREDENTIAL|PRIVATE|AUTH|COOKIE|SESSION|SALT|DSN/i;
+const CREDENTIAL_URL = /:\/\/[^\s/:@]+:[^\s/@]+@/;
 const sanitizeOptions = options => ({ waitForPrevious: options?.waitForPrevious === true, autoRestart: options?.autoRestart === true });
 // Spring 설정 파일에서 server.port를 읽고, 없으면 Spring Boot 기본 포트를 사용합니다.
 async function springPort(directory) {
@@ -425,7 +428,7 @@ class Engine {
       if (this.openBrowser) merged.BROWSER = 'none';
       const child = spawn('/bin/sh', ['-c', parsed.command], { cwd: app.path, env: merged, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       r.child = child; r.pid = child.pid;
-      r.redactions = Object.values({ ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides }).filter(value => value.length >= 4).sort((a, b) => b.length - a.length);
+      r.redactions = Object.entries({ ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides }).filter(([key, value]) => value.length >= 4 && (SECRET_KEY.test(key) || CREDENTIAL_URL.test(value))).map(([, value]) => value).sort((a, b) => b.length - a.length);
       const append = text => { if (r.discardLogs) return; r.log = (r.log + text).slice(-100000); };
       child.stdout.on('data', data => append(data.toString())); child.stderr.on('data', data => append(data.toString()));
       child.once('error', error => { r.error = error.message; r.child = null; this.setStatus(r, 'error'); append(error.message + '\n'); });

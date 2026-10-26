@@ -610,3 +610,13 @@ test('missing env files keep settings editable and block start with a clear mess
   await engine.setEnvFile(app.id, 'dev', 'env/.env.prod');
   assert.equal((await engine.env(app.id, 'dev')).envFileMissing, false);
 });
+test('logs hide only secret-looking values and keep ordinary settings visible', async t => {
+  const { engine, app, project } = await fixture(t, 'node server.cjs');
+  await fs.writeFile(path.join(project, 'server.cjs'), "console.log(['port', process.env.APP_PORT, process.env.MODE_NAME, process.env.API_KEY, process.env.DATABASE_URL, process.env.TOKEN].join(' ')); setInterval(()=>{},1000);");
+  await engine.saveEnv(app.id, 'dev', { APP_PORT: '4321', MODE_NAME: 'development', API_KEY: 'key-value-secret', DATABASE_URL: 'postgres://admin:pa55word@db.local/app' });
+  await engine.start(app.id, 'dev');
+  for (let i = 0; i < 60 && !engine.logs(app.id).includes('port '); i++) await delay(25);
+  const text = engine.logs(app.id);
+  assert.match(text, /port 4321 development /);
+  for (const secret of ['key-value-secret', 'pa55word', 'base-token-private']) assert.ok(!text.includes(secret), secret);
+});
