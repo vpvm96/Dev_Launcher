@@ -498,8 +498,11 @@ async function editEnv(app) {
   const script = scriptField(`${upper(selectedMode)} 실행 스크립트`, data.script, data.availableScripts, data.manualScript);
   const envFile = field(`${upper(selectedMode)} 환경 파일`, data.envFile || '', '.env.development');
   envFile.input.spellcheck = false;
+  const missing = el('p', 'inline-error', data.envFileMissing ? `환경 파일 ${data.envFile}을(를) 찾을 수 없습니다. 경로를 고친 뒤 저장해 주세요.` : '');
+  missing.setAttribute('role', 'alert');
+  missing.hidden = !data.envFileMissing;
   $('modal-body').append(
-    script.wrapper, envFile.wrapper,
+    script.wrapper, envFile.wrapper, missing,
     el('p', 'help', '감지된 스크립트를 선택하거나 sh ./start.sh처럼 직접 입력하세요. 명령은 프로젝트 폴더에서 실행되며 다음 실행 또는 재시작부터 적용됩니다. 환경 파일은 프로젝트 기준 상대 경로입니다.'),
   );
 

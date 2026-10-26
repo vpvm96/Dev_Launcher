@@ -600,3 +600,13 @@ test('clearLogs empties retained output while the process keeps running', async 
   assert.equal(engine.logs(app.id), '');
   assert.equal(engine.runtime.get(app.id).status, 'running');
 });
+test('missing env files keep settings editable and block start with a clear message', async t => {
+  const { engine, app, project } = await fixture(t, 'node server.cjs');
+  await fs.rm(path.join(project, 'env/.env.dev'));
+  const values = await engine.env(app.id, 'dev');
+  assert.equal(values.envFileMissing, true);
+  assert.deepEqual(values.base, []);
+  await assert.rejects(engine.start(app.id, 'dev'), /환경 파일 env\/\.env\.dev을\(를\) 찾을 수 없습니다/);
+  await engine.setEnvFile(app.id, 'dev', 'env/.env.prod');
+  assert.equal((await engine.env(app.id, 'dev')).envFileMissing, false);
+});

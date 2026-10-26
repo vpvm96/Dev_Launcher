@@ -331,10 +331,14 @@ class Engine {
   }
   async removeApp(id) { await this.ready; return this.serial(id, async () => { await this.stopProcess(id); for (const g of this.config.groups) g.apps = g.apps.filter(a => a.id !== id); delete this.config.overrides[id]; if (this.config.overrideDrafts) delete this.config.overrideDrafts[id]; await this.persist(); }); }
   async env(id, mode) {
-    await this.ready; const app = this.app(id); this.mode(mode, app); let base = {};
-    if (app.envFiles[mode]) base = parse(await fs.readFile(path.resolve(app.path, app.envFiles[mode])));
+    await this.ready; const app = this.app(id); this.mode(mode, app); let base = {}, envFileMissing = false;
+    // 환경 파일이 없어도 설정 화면에서 경로를 고칠 수 있도록 빈 기본값으로 엽니다.
+    if (app.envFiles[mode]) {
+      try { base = parse(await fs.readFile(path.resolve(app.path, app.envFiles[mode]))); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; envFileMissing = true; }
+    }
     const pkg = await projectCommands(app.path);
-    return { manualScript: app.manualScripts?.[mode] === true, envFile: app.envFiles[mode] || '', modes: modesOf(app), options: sanitizeOptions(app.options), tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) }, drafts: { ...this.config.overrideDrafts?.[id]?.[mode], ...this.config.overrides[id]?.[mode] } };
+    return { manualScript: app.manualScripts?.[mode] === true, envFile: app.envFiles[mode] || '', envFileMissing, modes: modesOf(app), options: sanitizeOptions(app.options), tunnel: app.tunnels?.[mode] || null, script: app.scripts[mode] || '', availableScripts: Object.keys(pkg.scripts || {}), base: Object.entries(base).map(([key, value]) => ({ key, value })), overrides: { ...(this.config.overrides[id]?.[mode] || {}) }, drafts: { ...this.config.overrideDrafts?.[id]?.[mode], ...this.config.overrides[id]?.[mode] } };
   }
   async setEnvFile(id, mode, file) {
     await this.ready; const app = this.app(id); this.mode(mode, app);
@@ -385,6 +389,7 @@ class Engine {
       // 등록한 스크립트의 환경 로더만 분리하여 프로젝트의 .env 파일을 건드리지 않습니다.
       if (!manual && (/(?:^|[;&|]\s*)\s*cp\s+[^\n]+\.env\b/.test(parsed.command) || /\b(?:env-cmd|dotenv)\b/.test(parsed.command))) throw new Error('자동 분리할 수 없는 환경 로더입니다. 환경 복사 없는 실행 명령을 선택해 주세요.');
       const values = await this.env(id, mode);
+      if (values.envFileMissing) throw new Error(`환경 파일 ${values.envFile}을(를) 찾을 수 없습니다. 환경 설정에서 경로를 확인해 주세요.`);
       const merged = { ...process.env, ...Object.fromEntries(values.base.map(v => [v.key, v.value])), ...values.overrides };
       const explicitPort = parsed.command.match(/(?:(?:^|\s)(?:--port|-p)(?:=|\s+)|(?:^|\s)PORT=)(\d+)/)?.[1];
       r.port = manual || pkg.type === 'node' || pkg.type === 'shell' ? Number(explicitPort) || Number(merged.PORT) || Number(merged.SERVER_PORT) || parsed.port || undefined : Number(merged.SERVER_PORT) || await springPort(app.path);

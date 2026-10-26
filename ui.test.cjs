@@ -441,3 +441,15 @@ test('settings add custom modes and save project options shown as badges', { tim
   await expect(page.getByLabel('user 실행 환경', { exact: true })).toHaveValue('dev');
   assert.deepEqual(errors, []);
 });
+
+test('missing env file still opens settings with a warning and saves a fixed path', { timeout: 40000 }, async t => {
+  const { page, project, errors } = await setup(t);
+  await fs.rename(path.join(project, 'env/.env.dev'), path.join(project, 'env/.env.local'));
+  await page.getByRole('button', { name: '환경 설정', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('env/.env.dev을(를) 찾을 수 없습니다');
+  await page.getByLabel('DEV 환경 파일', { exact: true }).fill('env/.env.local');
+  await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await expect(page.locator('#modal')).not.toBeVisible();
+  assert.equal(await page.evaluate(() => window.launcher.env('test-app', 'dev').then(value => value.envFileMissing)), false);
+  assert.deepEqual(errors, []);
+});
