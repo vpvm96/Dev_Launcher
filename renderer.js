@@ -637,7 +637,7 @@ async function refreshGroupLogs() {
 function visibleGroupLines() {
   const view = state.groupLogs;
   const filter = view.search.value.trim().toLowerCase();
-  return view.lines.filter((line) => (!view.source.value || line.id === view.source.value) && (!filter || stripAnsi(line.text).toLowerCase().includes(filter)));
+  return view.lines.filter((line) => stripAnsi(line.text).trim() && (!view.source.value || line.id === view.source.value) && (!filter || stripAnsi(line.text).toLowerCase().includes(filter)));
 }
 function drawGroupLogs() {
   const output = $('group-log-output');

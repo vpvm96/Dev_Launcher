@@ -75,7 +75,7 @@ select:disabled { opacity: .4; cursor: default; }
 .config-tools{display:flex;gap:8px}
 
 /* 로그 도구와 터미널 색상 */
-.log-tools{display:flex;gap:8px;margin-bottom:14px;position:sticky;top:0;background:var(--panel);z-index:1;padding-bottom:6px}.log-tools input[type=search]{flex:1;min-width:0}.log-tools button{font-size:11px}
+.log-tools{display:flex;gap:8px;margin:-22px 0 14px;padding-top:22px;position:sticky;top:-22px;background:var(--panel);z-index:1;padding-bottom:6px}.log-tools input[type=search]{flex:1;min-width:0}.log-tools button{font-size:11px}
 .ansi-b{font-weight:700}.ansi-fg-30,.ansi-fg-90{color:#7d8987}.ansi-fg-31,.ansi-fg-91{color:#ff8f8f}.ansi-fg-32,.ansi-fg-92{color:#9ce7c3}.ansi-fg-33,.ansi-fg-93{color:#f6c989}.ansi-fg-34,.ansi-fg-94{color:#8fb8ff}.ansi-fg-35,.ansi-fg-95{color:#e0a3ff}.ansi-fg-36,.ansi-fg-96{color:#8fe3e8}.ansi-fg-37,.ansi-fg-97{color:#f4f7f6}
 .ansi-bg-40,.ansi-bg-100{background:#2a3130}.ansi-bg-41,.ansi-bg-101{background:#6b2f2f;color:#fff}.ansi-bg-42,.ansi-bg-102{background:#2c5a45;color:#fff}.ansi-bg-43,.ansi-bg-103{background:#6b5a2c;color:#fff}.ansi-bg-44,.ansi-bg-104{background:#2c4a7a;color:#fff}.ansi-bg-45,.ansi-bg-105{background:#5f3a7a;color:#fff}.ansi-bg-46,.ansi-bg-106{background:#2c6b70;color:#fff}.ansi-bg-47,.ansi-bg-107{background:#c9d3d0;color:#111}
 

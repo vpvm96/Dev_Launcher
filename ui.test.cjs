@@ -625,6 +625,7 @@ test('group log dialog merges project output and filters by project', { timeout:
   await page.getByRole('button', { name: '그룹 로그', exact: true }).click();
   await expect(page.locator('#group-log-output')).toContainText('user │ hello from user');
   await expect(page.locator('#group-log-output')).toContainText('second │ hello from second');
+  await expect(page.locator('#group-log-output')).not.toContainText(/│ \n/);
   await page.getByLabel('로그 프로젝트', { exact: true }).selectOption({ label: 'second' });
   await expect(page.locator('#group-log-output')).not.toContainText('hello from user');
   await expect(page.locator('#group-log-output')).toContainText('hello from second');
