@@ -751,3 +751,28 @@ test('ready notifications are opt-in and fire once the port opens', async t => {
   assert.deepEqual(notes, [{ title: `${app.name} 준비됨`, body: `http://localhost:${port}에서 접속할 수 있습니다.` }]);
   await assert.rejects(engine.setReadyNotify('yes'), /준비 완료 알림 설정이 올바르지 않습니다/);
 });
+test('personal values are encrypted at rest when a secret box is provided', async t => {
+  const box = { encrypt: text => 'sealed:' + Buffer.from(text).toString('base64'), decrypt: text => { if (!text.startsWith('sealed:')) throw new Error('bad'); return Buffer.from(text.slice(7), 'base64').toString(); } };
+  const { engine, app, dataDir } = await fixture(t, 'node server.cjs');
+  await engine.saveEnv(app.id, 'dev', { SECRET_VALUE: 'plain-text-secret' });
+  assert.match(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'), /plain-text-secret/);
+  const sealed = new Engine({ dataDir, secretBox: box });
+  try {
+    assert.equal((await sealed.env(app.id, 'dev')).overrides.SECRET_VALUE, 'plain-text-secret');
+    await sealed.saveEnv(app.id, 'dev', { SECRET_VALUE: 'second-secret' });
+    const stored = await fs.readFile(path.join(dataDir, 'config.json'), 'utf8');
+    assert.ok(!stored.includes('plain-text-secret') && !stored.includes('second-secret'));
+    assert.match(JSON.parse(stored).secrets, /^sealed:/);
+    assert.equal(JSON.parse(stored).overrides, undefined);
+  } finally { await sealed.shutdown(); }
+  const reopened = new Engine({ dataDir, secretBox: box });
+  assert.equal((await reopened.env(app.id, 'dev')).overrides.SECRET_VALUE, 'second-secret');
+  assert.equal(reopened.loadWarning, undefined);
+  const broken = new Engine({ dataDir, secretBox: { encrypt: box.encrypt, decrypt: () => { throw new Error('key changed'); } } });
+  try {
+    assert.deepEqual((await broken.env(app.id, 'dev')).overrides, {});
+    assert.match(broken.loadWarning, /개인 환경값을 복호화할 수 없어/);
+    assert.match(await fs.readFile(path.join(dataDir, 'secrets.unreadable'), 'utf8'), /^sealed:/);
+    assert.equal((await broken.list()).groups[0].apps[0].id, app.id);
+  } finally { await broken.shutdown(); }
+});

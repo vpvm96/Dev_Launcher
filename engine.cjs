@@ -142,8 +142,8 @@ function portOpen(port) {
   });
 }
 class Engine {
-  constructor({ dataDir = path.join(os.homedir(), 'Library/Application Support/Dev Launcher'), openBrowser, tunnelOptions, notify, onChange, nodeRoots } = {}) {
-    this.tunnelOptions = tunnelOptions; this.openBrowser = openBrowser; this.notify = notify; this.onChange = onChange; this.nodeRoots = nodeRoots; this.dataDir = dataDir; this.runtime = new Map(); this.previous = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
+  constructor({ dataDir = path.join(os.homedir(), 'Library/Application Support/Dev Launcher'), openBrowser, tunnelOptions, notify, onChange, nodeRoots, secretBox } = {}) {
+    this.secretBox = secretBox; this.tunnelOptions = tunnelOptions; this.openBrowser = openBrowser; this.notify = notify; this.onChange = onChange; this.nodeRoots = nodeRoots; this.dataDir = dataDir; this.runtime = new Map(); this.previous = new Map(); this.queues = new Map(); this.saveQueue = Promise.resolve(); this.launchQueue = Promise.resolve();
     this.ready = this.load();
   }
   // 상태가 바뀌었음을 화면에 알립니다. 폴링 대신 즉시 갱신하는 용도입니다.
@@ -158,7 +158,7 @@ class Engine {
       this.config = { groups: [], overrides: {} };
       await this.persist();
     }
-    let changed = false;
+    let changed = await this.unsealSecrets();
     for (const app of this.config.groups.flatMap(g => g.apps)) {
       let pkg;
       try { pkg = await projectCommands(app.path); }
@@ -174,8 +174,33 @@ class Engine {
     }
     if (changed) await this.persist();
   }
+  // 개인 환경값은 secretBox가 있으면 암호문으로 저장합니다. 복호화할 수 없으면 암호문을 따로 보관하고 빈 값으로 시작합니다.
+  async unsealSecrets() {
+    if (this.config.secrets === undefined) {
+      this.config.overrides ||= {};
+      return Boolean(this.secretBox) && (Object.keys(this.config.overrides).length > 0 || this.config.overrideDrafts !== undefined);
+    }
+    const sealed = this.config.secrets;
+    delete this.config.secrets;
+    try {
+      if (!this.secretBox) throw new Error('암호화 기능을 사용할 수 없습니다.');
+      const { overrides, overrideDrafts } = JSON.parse(this.secretBox.decrypt(sealed));
+      this.config.overrides = overrides || {};
+      if (overrideDrafts) this.config.overrideDrafts = overrideDrafts;
+    } catch {
+      await fs.writeFile(path.join(this.dataDir, 'secrets.unreadable'), sealed, { mode: 0o600 });
+      this.config.overrides = {}; delete this.config.overrideDrafts;
+      this.loadWarning = '개인 환경값을 복호화할 수 없어 빈 값으로 시작합니다. 키체인의 Dev Launcher 항목이 바뀌었을 수 있습니다. 기존 암호문은 secrets.unreadable 파일에 보관했습니다.';
+    }
+    return true;
+  }
+  serialize() {
+    if (!this.secretBox) return this.config;
+    const { overrides, overrideDrafts, ...rest } = this.config;
+    return { ...rest, secrets: this.secretBox.encrypt(JSON.stringify({ overrides, overrideDrafts })) };
+  }
   persist() {
-    const content = JSON.stringify(this.config, null, 2);
+    const content = JSON.stringify(this.serialize(), null, 2);
     this.saveQueue = this.saveQueue.catch(() => {}).then(async () => {
       const temporary = path.join(this.dataDir, 'config.tmp');
       await fs.writeFile(temporary, content, { mode: 0o600 });

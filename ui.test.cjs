@@ -310,7 +310,7 @@ test('background updates show a notice and downloaded updates open the install a
 
 
 test('unchecked overrides survive saving, filtering and reopening while values show by default', { timeout: 40000 }, async t => {
-  const { page, errors } = await setup(t);
+  const { page, project, errors } = await setup(t);
   await page.getByRole('button', { name: '환경 설정', exact: true }).click();
   const input = page.getByLabel('API_URL 개인 설정', { exact: true });
   const row = page.locator('.env-row').filter({ hasText: 'API_URL' });
@@ -337,6 +337,9 @@ test('unchecked overrides survive saving, filtering and reopening while values s
   await expect(input).toHaveValue('http://localhost:8899');
   await page.getByRole('button', { name: '설정 저장', exact: true }).click();
   assert.equal(await page.evaluate(() => window.launcher.env('test-app', 'dev').then(value => value.overrides.API_URL)), 'http://localhost:8899');
+  const stored = await fs.readFile(path.join(project, '../data/config.json'), 'utf8');
+  assert.ok(!stored.includes('localhost:8899'));
+  assert.equal(typeof JSON.parse(stored).secrets, 'string');
   assert.deepEqual(errors, []);
 });
 

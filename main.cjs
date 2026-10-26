@@ -1,5 +1,5 @@
 // 프로젝트 실행 엔진과 안전한 데스크톱 창을 연결한다.
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, Notification, nativeImage, clipboard, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, Notification, nativeImage, clipboard, screen, safeStorage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
@@ -101,8 +101,14 @@ else {
       catch { /* 현재 프로세스의 PATH를 유지한다. */ }
     }
     const notifyChange = () => { if (window && !window.isDestroyed()) window.webContents.send('changed'); };
+    // 개인 환경값은 macOS 키체인에 보관된 키로 암호화해 저장한다.
+    const secretBox = safeStorage.isEncryptionAvailable() ? {
+      encrypt: text => safeStorage.encryptString(text).toString('base64'),
+      decrypt: text => safeStorage.decryptString(Buffer.from(text, 'base64')),
+    } : undefined;
     engine = new Engine({
       dataDir: process.env.DEV_LAUNCHER_DATA_DIR || app.getPath('userData'),
+      secretBox,
       openBrowser: url => shell.openExternal(url),
       notify,
       onChange: () => { notifyChange(); scheduleTray(); },
@@ -186,6 +192,7 @@ else {
     });
     await window.loadFile('index.html');
     await engine.ready; scheduleTray();
+    if (engine.loadWarning) void dialog.showMessageBox(window, { type: 'warning', message: '개인 환경값을 불러오지 못했습니다.', detail: engine.loadWarning });
     if (app.isPackaged && !process.env.DEV_LAUNCHER_DATA_DIR) {
       setTimeout(() => { void updates.check().catch(() => {}); }, 10000).unref();
       setInterval(() => { void updates.check().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
